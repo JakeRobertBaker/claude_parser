@@ -32,6 +32,6 @@ class Node:
 
 
 class RootNode:
-    def __init__(self):
-        self.parent = None
+    def __init__(self, children: list[Node]):
+        self.children = children
         self.rank = 0
