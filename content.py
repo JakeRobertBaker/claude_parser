@@ -12,29 +12,28 @@ class ContentPartition:
         self.content_boundaries: defaultdict[int, list[LineRange]] = defaultdict(list)
 
         for content in content_list:
-            partition_id = (content.chunk_number, content.first_line)
-            if partition_id in self.data:
-                raise ValueError(f"Partition {partition_id} is already assigned.")
+            self.append(content)
 
-            # ensure that the content does not not intersect any existing boundaries
-            if (
-                (
-                    content.first_line >= boundary[0]
-                    and content.first_line <= boundary[1]
-                )
-                or (
-                    content.last_line <= boundary[1]
-                    and content.last_line <= boundary[1]
-                )
-                for boundary in self.content_boundaries[content.chunk_number]
-            ):
-                pass
+    def append(self, content: "Content"):
+        partition_id = (content.chunk_number, content.first_line)
+        if partition_id in self.data:
+            raise ValueError(f"Partition {partition_id} is already assigned.")
 
-            self.data[partition_id] = content
-            bisect.insort(
-                self.content_boundaries[content.chunk_number],
-                (content.first_line, content.last_line),
+        boundaries = self.content_boundaries[content.chunk_number]
+        new_range: LineRange = (content.first_line, content.last_line)
+        idx = bisect.bisect_left(boundaries, new_range)
+
+        if idx > 0 and boundaries[idx - 1][1] >= new_range[0]:
+            raise ValueError(
+                f"{new_range} overlaps with existing boundary {boundaries[idx - 1]}."
             )
+        if idx < len(boundaries) and new_range[1] >= boundaries[idx][0]:
+            raise ValueError(
+                f"{new_range} overlaps with existing boundary {boundaries[idx]}."
+            )
+
+        self.data[partition_id] = content
+        boundaries.insert(idx, new_range)
 
 
 class Content:
