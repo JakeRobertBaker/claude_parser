@@ -37,10 +37,10 @@ class ContentPartition:
 
 
 class Content:
-    def __init__(self):
-        self.chunk_number: int
-        self.first_line: int
-        self.last_line: int
+    def __init__(self, chunk_number: int, first_line: int, last_line: int):
+        self.chunk_number = chunk_number
+        self.first_line = first_line
+        self.last_line = last_line
 
     @property
     def n_lines(self) -> int:
