@@ -24,7 +24,7 @@ class Node:
         theory: bool,
         rank_increment: int,
         dependencies: list[Content],
-        parent: Node | RootNode,
+        parent: Node | None = None,
     ):
         self.title = title
         self.children = children
@@ -37,19 +37,7 @@ class Node:
 
     @property
     def rank(self) -> int:
+        if self.parent is None:
+            raise ValueError("Node has no parent assigned and therefore no rank.")
         return self.parent.rank + self.rank_increment
 
-
-class RootNode:
-    def __init__(self, children: list[Node]):
-        self.children = children
-        self.rank = 0
-
-
-# psudocode
-def build_node_from_dict(node_dict: dict) -> Node:
-    children = node_dict.get("children", [])
-    if not isinstance(children, list):
-        raise ValueError("children should always be a list.")
-
-        children = [build_node_from_dict(child_dict) for child_dict in children]

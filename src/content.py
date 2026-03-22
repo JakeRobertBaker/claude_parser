@@ -7,14 +7,14 @@ LineRange = tuple[int, int]
 class ContentPartition:
     """List-like container enforcing that all content belongs to a partition of chunks."""
 
-    def __init__(self, content_list: list["Content"] = []):
-        self.data: dict[tuple[int, int], "Content"] = {}
+    def __init__(self, content_list: list[Content] = []):
+        self.data: dict[tuple[int, int], Content] = {}
         self.content_boundaries: defaultdict[int, list[LineRange]] = defaultdict(list)
 
         for content in content_list:
             self.append(content)
 
-    def append(self, content: "Content"):
+    def append(self, content: Content):
         partition_id = (content.chunk_number, content.first_line)
         if partition_id in self.data:
             raise ValueError(f"Partition {partition_id} is already assigned.")
@@ -46,7 +46,7 @@ class Content:
     def n_lines(self) -> int:
         return self.last_line - self.first_line + 1
 
-    def __lt__(self, other: "Content") -> bool:
+    def __lt__(self, other: Content) -> bool:
         if self.chunk_number != other.chunk_number:
             return self.chunk_number < other.chunk_number
         return self.first_line < other.first_line
