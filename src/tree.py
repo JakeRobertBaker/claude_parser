@@ -15,15 +15,25 @@ class NodeType(Enum):
 
 
 class Node:
-    def __init__(self):
-        self.title: str
-        self.children: list[Node]
-        self.content: list[Content]
-        self.node_type: NodeType
-        self.theory: bool
-        self.rank_increment: int
-        self.dependencies: list[Content]
-        self.parent: Node | RootNode
+    def __init__(
+        self,
+        title: str,
+        children: list[Node],
+        content: list[Content],
+        node_type: NodeType,
+        theory: bool,
+        rank_increment: int,
+        dependencies: list[Content],
+        parent: Node | RootNode,
+    ):
+        self.title = title
+        self.children = children
+        self.content = content
+        self.node_type = node_type
+        self.theory = theory
+        self.rank_increment = rank_increment
+        self.dependencies = dependencies
+        self.parent = parent
 
     @property
     def rank(self) -> int:
