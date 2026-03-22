@@ -1,6 +1,5 @@
 from __future__ import annotations
 from enum import Enum
-from typing import Optional
 from content import ContentPartition, Content
 
 
@@ -35,3 +34,12 @@ class RootNode:
     def __init__(self, children: list[Node]):
         self.children = children
         self.rank = 0
+
+
+# psudocode
+def build_node_from_dict(node_dict: dict) -> Node:
+    children = node_dict.get("children", [])
+    if not isinstance(children, list):
+        raise ValueError("children should always be a list.")
+
+        children = [build_node_from_dict(child_dict) for child_dict in children]
