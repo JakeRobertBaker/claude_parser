@@ -114,3 +114,10 @@ class Node:
         if self.parent is None:
             raise ValueError("Node has no parent assigned and therefore no rank.")
         return self.parent.rank + self.rank_increment
+
+    def content_span(self) -> list[Content]:
+        if not self.children:
+            return self.content
+
+        children_content_span = [c.content_span() for c in self.children]
+        return self.content + children_content_span
