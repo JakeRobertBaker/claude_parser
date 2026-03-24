@@ -1,4 +1,5 @@
 from __future__ import annotations
+import propcache
 from collections.abc import Mapping
 from enum import Enum
 from content import ContentPartition, Content
@@ -15,22 +16,26 @@ class NodeType(Enum):
     EG = "example"
 
 
-class RootNode:
-    rank = 0
-
-
-class NodeDict(Mapping):
+class TreeDict(Mapping):
     """
     Registry of Nodes keyed by Node.id.
     """
 
     def __init__(self):
         self._data: dict[str, Node] = {}
+        self.root_node = None
 
-    def register(self, node: Node) -> None:
-        if node.id in self._data:
-            raise ValueError(f"Node with id '{node.id}' is already registered.")
-        self._data[node.id] = node
+    def register(self, node: Node | RootNode) -> None:
+        if isinstance(node, Node):
+            if node.id in self._data:
+                raise ValueError(f"Node with id '{node.id}' is already registered.")
+            self._data[node.id] = node
+        elif isinstance(node, RootNode):
+            if self.root_node:
+                raise ValueError("RootNode has already been registered.")
+            self.root_node = node
+        else:
+            raise ValueError("Can only register Node or RootNode.")
 
     def remove(self, node_id: str) -> None:
         if node_id not in self._data:
@@ -46,7 +51,25 @@ class NodeDict(Mapping):
         return len(self._data)
 
     def __iter__(self):
-        raise NotImplementedError("Iteration is not supported.")
+        if not self.root_node:
+            raise ValueError(
+                "Cannot iterate through TreeDict until root has been defined."
+            )
+
+        else:
+            # We want to iterate through nodes according to their rank
+            pass
+
+
+class RootNode:
+    def __init__(self, title: str, node_dict: TreeDict, children: list[Node]):
+        """
+        Once the Root Node has been defined the full tree has been defined.
+        """
+        self.title = title
+        self.rank = 0
+        self.id = "root"
+        self.children = children
 
 
 class Node:
@@ -59,7 +82,7 @@ class Node:
         node_type: NodeType,
         theory: bool,
         rank_increment: int,
-        node_dict: NodeDict,
+        node_dict: TreeDict,
         dependency_ids: list[str] = [],
         parent: RootNode | Node | None = None,  # None until assigned to a tree
     ):
@@ -73,6 +96,8 @@ class Node:
         self._node_dict = node_dict
         self._dependencies = dependency_ids
         self.parent = parent
+
+        self._node_dict.register(self)
 
     @property
     def dependencies(self) -> list[Node]:
