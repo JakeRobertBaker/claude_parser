@@ -55,10 +55,8 @@ class TreeDict(Mapping):
             raise ValueError(
                 "Cannot iterate through TreeDict until root has been defined."
             )
-
-        else:
-            # We want to iterate through nodes according to their rank
-            pass
+        for node in sorted(self._data.values(), key=lambda n: n.rank):
+            yield node.id
 
 
 class RootNode:
@@ -83,7 +81,7 @@ class Node:
         theory: bool,
         rank_increment: int,
         node_dict: TreeDict,
-        dependency_ids: list[str] = [],
+        dependency_ids: list[str] | None = None,
         parent: RootNode | Node | None = None,  # None until assigned to a tree
     ):
         self.id = id
@@ -94,7 +92,7 @@ class Node:
         self.theory = theory
         self.rank_increment = rank_increment
         self._node_dict = node_dict
-        self._dependencies = dependency_ids
+        self._dependencies = dependency_ids or []
         self.parent = parent
 
         self._node_dict.register(self)
