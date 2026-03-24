@@ -1,6 +1,6 @@
 from __future__ import annotations
 from content import Content
-from tree import Node, NodeDict, NodeType
+from tree import Node, TreeDict, NodeType
 
 
 def content_from_dict(content_dict: dict) -> Content:
@@ -11,12 +11,14 @@ def content_from_dict(content_dict: dict) -> Content:
     )
 
 
-def node_from_dict(node_dict: dict, node_registry: NodeDict) -> Node:
+def node_from_dict(node_dict: dict, node_registry: TreeDict) -> Node:
     children_dicts = node_dict.get("children", [])
     if not isinstance(children_dicts, list):
         raise ValueError("children should always be a list.")
 
-    children = [node_from_dict(child_dict, node_registry) for child_dict in children_dicts]
+    children = [
+        node_from_dict(child_dict, node_registry) for child_dict in children_dicts
+    ]
 
     node = Node(
         id=node_dict["id"],
