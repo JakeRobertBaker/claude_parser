@@ -126,7 +126,10 @@ class Node:
 
         return f(f(self.content), *[f(child.content) for child in self.children])
 
-    def content_span(self) -> tuple[Content | None]:
+    def content_bounds(self) -> tuple[Content | None, Content | None]:
+        """
+        Get the upper and lower content bounds of the Node's span.
+        """
         greatest_content = self._child_content_extrema("max")
         least_content = self._child_content_extrema("min")
-        return (least_content, greatest_content)
+        return least_content, greatest_content
