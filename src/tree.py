@@ -115,9 +115,18 @@ class Node:
             raise ValueError("Node has no parent assigned and therefore no rank.")
         return self.parent.rank + self.rank_increment
 
-    def content_span(self) -> list[Content]:
-        if not self.children:
-            return self.content
+    def _child_content_extrema(self, max_min) -> Content | None:
+        """
+        Get the max/min of a Node's and all of it's children's content.
+        """
+        if max_min == "max":
+            f = max
+        else:
+            f = min
 
-        children_content_span = [c.content_span() for c in self.children]
-        return self.content + children_content_span
+        return f(f(self.content), *[f(child.content) for child in self.children])
+
+    def content_span(self) -> tuple[Content | None]:
+        greatest_content = self._child_content_extrema("max")
+        least_content = self._child_content_extrema("min")
+        return (least_content, greatest_content)
