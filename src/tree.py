@@ -97,6 +97,10 @@ class Node:
 
         self._node_dict.register(self)
 
+        if self.content:
+            if min(*[child.content for child in self.children]) < self.content:
+                raise ValueError("Nodes's content must be before it's child content.")
+
     @property
     def dependencies(self) -> list[Node]:
         resolved = []
@@ -115,11 +119,11 @@ class Node:
             raise ValueError("Node has no parent assigned and therefore no rank.")
         return self.parent.rank + self.rank_increment
 
-    def _child_content_extrema(self, max_min) -> Content | None:
+    def _child_content_extrema(self, min_max) -> Content | None:
         """
         Get the max/min of a Node's and all of it's children's content.
         """
-        if max_min == "max":
+        if min_max == "max":
             f = max
         else:
             f = min
