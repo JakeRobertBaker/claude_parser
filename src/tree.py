@@ -1,5 +1,4 @@
 from __future__ import annotations
-from functools import cached_property
 from collections.abc import Mapping
 from enum import Enum
 from content import ContentPartition, Content
@@ -97,21 +96,39 @@ class Node:
         self._node_dict.register(self)
 
         # child content must be after node content
-        if self.content_list:
-            if any(
-                child.is_before_content_list(self.content_list)
-                for child in self.children
-            ):
+        upper_bound = self.max_self_parent_content()
+        if upper_bound:
+            if any(child.is_before_content(upper_bound) for child in self.children):
                 raise ValueError("Nodes's content must be before it's child content.")
 
+    def max_self_parent_content(self) -> Content | None:
+        """
+        Get the maximum of this Node's content and it's ancestors.
+        """
+        candidates = self.content_list.copy()
+        if isinstance(self.parent, Node):
+            parent_max = self.parent.max_self_parent_content()
+            if parent_max:
+                candidates.append(parent_max)
+        return max(candidates) if candidates else None
+
     def is_after(self, other: Node) -> bool:
-        if self._content_extrema_min and other._content_extrema_max:
-            return self._content_extrema_min > other._content_extrema_max
+        """
+        Return True iff this Node's content is all strictly after the other's.
+        """
+        self_min = self._content_extrema_min()
+        other_max = other._content_extrema_max()
+        if self_min and other_max:
+            return self_min > other_max
         return False
 
-    def is_before_content_list(self, content_list: list[Content]) -> bool:
-        if self._content_extrema_max:
-            return self._content_extrema_max < min(content_list)
+    def is_before_content(self, bound: Content) -> bool:
+        """
+        Return True iff this Node's content is all strictly before before bound.
+        """
+        self_max = self._content_extrema_max()
+        if self_max:
+            return self_max < bound
         return False
 
     @property
@@ -126,20 +143,18 @@ class Node:
                 )
         return resolved
 
-    @cached_property
     def _content_extrema_max(self) -> Content | None:
         """Get the max Content of this Node's and all of its children's content."""
         candidates = self.content_list + [
-            child._content_extrema_max for child in self.children
+            child._content_extrema_max() for child in self.children
         ]
         candidates = [x for x in candidates if x]
         return max(candidates) if candidates else None
 
-    @cached_property
     def _content_extrema_min(self) -> Content | None:
         """Get the min Content of this Node's and all of its children's content."""
         candidates = self.content_list + [
-            child._content_extrema_min for child in self.children
+            child._content_extrema_min() for child in self.children
         ]
         candidates = [x for x in candidates if x]
         return min(candidates) if candidates else None
@@ -148,26 +163,11 @@ class Node:
         """
         Get the upper and lower content bounds of the Node's span.
         """
-        return self._content_extrema_min, self._content_extrema_max
+        return self._content_extrema_min(), self._content_extrema_max()
 
     def add_child(self, child: Node) -> None:
         self.children.append(child)
         child.assign_parent(self)
-
-        node = self
-        while node is not None and isinstance(node, Node):
-            child_max = child._content_extrema_max
-            child_min = child._content_extrema_min
-
-            if child_max and "_content_extrema_max" in node.__dict__:
-                if node.__dict__["_content_extrema_max"] is None or child_max > node.__dict__["_content_extrema_max"]:
-                    node.__dict__["_content_extrema_max"] = child_max
-
-            if child_min and "_content_extrema_min" in node.__dict__:
-                if node.__dict__["_content_extrema_min"] is None or child_min < node.__dict__["_content_extrema_min"]:
-                    node.__dict__["_content_extrema_min"] = child_min
-
-            node = node.parent
 
     def assign_parent(self, parent: RootNode | Node):
         if self.parent:
