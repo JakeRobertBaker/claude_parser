@@ -1,0 +1,47 @@
+{
+  "id": "root",
+  "title": "Companion to Analysis",
+  "node_type": "generic",
+  "theory": false,
+  "content": [],
+  "dependencies": [],
+  "children": [
+    {
+      "id": "ch01",
+      "title": "The Real Line",
+      "node_type": "generic",
+      "theory": false,
+      "content": [{"chunk_number": 0, "first_line": 1, "last_line": 50}],
+      "dependencies": [],
+      "children": [
+        {
+          "id": "sec01_01",
+          "title": "Why do we bother?",
+          "node_type": "generic",
+          "theory": false,
+          "content": [{"chunk_number": 0, "first_line": 51, "last_line": 100}],
+          "dependencies": [],
+          "children": []
+        },
+        {
+          "id": "def_metric",
+          "title": "Definition: Metric Space",
+          "node_type": "definition",
+          "theory": true,
+          "content": [{"chunk_number": 0, "first_line": 101, "last_line": 120}],
+          "dependencies": [],
+          "children": []
+        }
+      ]
+    },
+    {
+      "id": "ch02",
+      "title": "A First Philosophical Interlude",
+      "node_type": "generic",
+      "theory": false,
+      "content": [{"chunk_number": 1, "first_line": 1, "last_line": 80}],
+      "dependencies": [],
+      "children": []
+    }
+  ]
+}

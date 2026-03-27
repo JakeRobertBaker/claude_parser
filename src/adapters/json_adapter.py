@@ -14,7 +14,7 @@ def content_from_dict(content_dict: dict) -> Content:
 def node_from_dict(node_dict: dict, node_registry: TreeDict) -> Node:
     children_dicts = node_dict.get("children", [])
     if not isinstance(children_dicts, list):
-        raise ValueError("children should always be a list.")
+        raise ValueError("'children' must be a list.")
 
     children = [
         node_from_dict(child_dict, node_registry) for child_dict in children_dicts
@@ -25,15 +25,25 @@ def node_from_dict(node_dict: dict, node_registry: TreeDict) -> Node:
         title=node_dict["title"],
         children=children,
         content_list=[content_from_dict(c) for c in node_dict.get("content", [])],
-        node_type=NodeType(node_dict["node_type"]),
-        theory=node_dict["theory"],
+        node_type=NodeType(node_dict.get("node_type", "generic")),
+        theory=node_dict.get("theory", False),
         node_dict=node_registry,
         dependency_ids=node_dict.get("dependencies", []),
     )
 
-    node_registry.register(node)
-
     for child in children:
-        child.add_parent(node)
+        child._assign_parent(node)
 
     return node
+
+
+def tree_from_dict(data: dict) -> tuple[Node, TreeDict]:
+    """
+    Build a full tree from a nested dict. Returns (root_node, tree_dict).
+    Call tree_dict.validate() after building if ordering validation is required.
+    """
+    node_registry = TreeDict()
+    root = node_from_dict(data, node_registry)
+    node_registry.set_root(root)
+    node_registry.validate()
+    return root, node_registry

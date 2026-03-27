@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections.abc import Mapping
 from enum import Enum
-from content import ContentPartition, Content
+from content import Content
 
 
 class NodeType(Enum):
@@ -22,24 +22,36 @@ class TreeDict(Mapping):
 
     def __init__(self):
         self._data: dict[str, Node] = {}
-        self.root_node = None
+        self.root_node: Node | None = None
 
-    def register(self, node: Node | RootNode) -> None:
-        if isinstance(node, Node):
-            if node.id in self._data:
-                raise ValueError(f"Node with id '{node.id}' is already registered.")
-            self._data[node.id] = node
-        elif isinstance(node, RootNode):
-            if self.root_node:
-                raise ValueError("RootNode has already been registered.")
-            self.root_node = node
-        else:
-            raise ValueError("Can only register Node or RootNode.")
+    def register(self, node: Node) -> None:
+        if node.id in self._data:
+            raise ValueError(f"Node with id '{node.id}' is already registered.")
+        self._data[node.id] = node
+
+    def set_root(self, node: Node) -> None:
+        if self.root_node is not None:
+            raise ValueError("Root node has already been set.")
+        self.root_node = node
 
     def remove(self, node_id: str) -> None:
         if node_id not in self._data:
             raise KeyError(f"Node with id '{node_id}' not found.")
         del self._data[node_id]
+
+    def validate(self) -> None:
+        """
+        Validate content ordering across the full tree.
+        Raises ValueError if any node's content appears after a child's content.
+        """
+        for node in self._data.values():
+            upper_bound = node.max_self_parent_content()
+            if upper_bound:
+                for child in node.children:
+                    if child.is_before_content(upper_bound):
+                        raise ValueError(
+                            f"Node '{node.id}' has content after child '{child.id}'."
+                        )
 
     def __getitem__(self, node_id: str) -> Node:
         if node_id not in self._data:
@@ -57,16 +69,6 @@ class TreeDict(Mapping):
         raise NotImplementedError("To be implemented.")
 
 
-class RootNode:
-    def __init__(self, title: str, node_dict: TreeDict, children: list[Node]):
-        """
-        Once the Root Node has been defined the full tree has been defined.
-        """
-        self.title = title
-        self.id = "root"
-        self.children = children
-
-
 class Node:
     def __init__(
         self,
@@ -78,7 +80,7 @@ class Node:
         theory: bool,
         node_dict: TreeDict,
         dependency_ids: list[str] | None = None,
-        parent: RootNode | Node | None = None,  # None until assigned to a tree
+        parent: Node | None = None,
     ):
         self.id = id
         self.title = title
@@ -91,19 +93,13 @@ class Node:
         self.parent = None
 
         if parent:
-            self.assign_parent(parent)
+            self._assign_parent(parent)
 
         self._node_dict.register(self)
 
-        # child content must be after node content
-        upper_bound = self.max_self_parent_content()
-        if upper_bound:
-            if any(child.is_before_content(upper_bound) for child in self.children):
-                raise ValueError("Nodes's content must be before it's child content.")
-
     def max_self_parent_content(self) -> Content | None:
         """
-        Get the maximum of this Node's content and it's ancestors.
+        Get the maximum of this Node's content and its ancestors.
         """
         candidates = self.content_list.copy()
         if isinstance(self.parent, Node):
@@ -124,7 +120,7 @@ class Node:
 
     def is_before_content(self, bound: Content) -> bool:
         """
-        Return True iff this Node's content is all strictly before before bound.
+        Return True iff this Node's full subtree content is all strictly before bound.
         """
         self_max = self._content_extrema_max()
         if self_max:
@@ -166,11 +162,18 @@ class Node:
         return self._content_extrema_min(), self._content_extrema_max()
 
     def add_child(self, child: Node) -> None:
+        """
+        Phase 2: add a child to an existing tree node, with local ordering validation.
+        """
+        upper_bound = self.max_self_parent_content()
+        if upper_bound and child.is_before_content(upper_bound):
+            raise ValueError(
+                f"Cannot add child '{child.id}': its content precedes '{self.id}'."
+            )
         self.children.append(child)
-        child.assign_parent(self)
+        child._assign_parent(self)
 
-    def assign_parent(self, parent: RootNode | Node):
-        if self.parent:
-            raise ValueError(f"Parent is already assigned to node {self.id}")
-        else:
-            self.parent = parent
+    def _assign_parent(self, parent: Node) -> None:
+        if self.parent is not None:
+            raise ValueError(f"Parent is already assigned to node '{self.id}'.")
+        self.parent = parent
