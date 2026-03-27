@@ -1,5 +1,5 @@
 from __future__ import annotations
-import propcache
+from functools import cached_property
 from collections.abc import Mapping
 from enum import Enum
 from content import ContentPartition, Content
@@ -55,8 +55,7 @@ class TreeDict(Mapping):
             raise ValueError(
                 "Cannot iterate through TreeDict until root has been defined."
             )
-        for node in sorted(self._data.values(), key=lambda n: n.rank):
-            yield node.id
+        raise NotImplementedError("To be implemented.")
 
 
 class RootNode:
@@ -65,7 +64,6 @@ class RootNode:
         Once the Root Node has been defined the full tree has been defined.
         """
         self.title = title
-        self.rank = 0
         self.id = "root"
         self.children = children
 
@@ -97,11 +95,21 @@ class Node:
 
         # child content must be after node content
         if self.content_list:
-            if any(self.is_after(child) for child in self.children):
+            if any(
+                child.is_before_content_list(self.content_list)
+                for child in self.children
+            ):
                 raise ValueError("Nodes's content must be before it's child content.")
 
     def is_after(self, other: Node) -> bool:
-        return min(self.content_list) > max(other.content_list)
+        if self._content_extrema_min and other._content_extrema_max:
+            return self._content_extrema_min > other._content_extrema_max
+        return False
+
+    def is_before_content_list(self, content_list: list[Content]) -> bool:
+        if self._content_extrema_max:
+            return self._content_extrema_max < min(content_list)
+        return False
 
     @property
     def dependencies(self) -> list[Node]:
@@ -115,29 +123,26 @@ class Node:
                 )
         return resolved
 
-    def _child_content_extrema(self, min_max) -> Content | None:
-        """
-        Get the max/min of a Node's and all of it's children's content.
-        """
-        if min_max == "max":
-            f = max
-        else:
-            f = min
-
-        extrema_candidates = self.content_list + [
-            child._child_content_extrema(min_max) for child in self.children
+    @cached_property
+    def _content_extrema_max(self) -> Content | None:
+        """Get the max Content of this Node's and all of its children's content."""
+        candidates = self.content_list + [
+            child._content_extrema_max for child in self.children
         ]
+        candidates = [x for x in candidates if x]
+        return max(candidates) if candidates else None
 
-        extrema_candidates = [x for x in extrema_candidates if x]
-
-        extrema = f(extrema_candidates) if extrema_candidates else None
-
-        return extrema
+    @cached_property
+    def _content_extrema_min(self) -> Content | None:
+        """Get the min Content of this Node's and all of its children's content."""
+        candidates = self.content_list + [
+            child._content_extrema_min for child in self.children
+        ]
+        candidates = [x for x in candidates if x]
+        return min(candidates) if candidates else None
 
     def content_bounds(self) -> tuple[Content | None, Content | None]:
         """
         Get the upper and lower content bounds of the Node's span.
         """
-        greatest_content = self._child_content_extrema("max")
-        least_content = self._child_content_extrema("min")
-        return least_content, greatest_content
+        return self._content_extrema_min, self._content_extrema_max

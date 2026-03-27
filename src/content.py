@@ -57,3 +57,6 @@ class Content:
         return (self.chunk_number == other.chunk_number) and (
             self.first_line == other.first_line
         )
+
+    def __bool__(self) -> bool:
+        return True
