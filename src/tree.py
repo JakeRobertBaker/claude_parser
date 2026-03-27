@@ -76,10 +76,9 @@ class Node:
         id: str,
         title: str,
         children: list[Node],
-        content: list[Content],
+        content_list: list[Content],
         node_type: NodeType,
         theory: bool,
-        rank_increment: int,
         node_dict: TreeDict,
         dependency_ids: list[str] | None = None,
         parent: RootNode | Node | None = None,  # None until assigned to a tree
@@ -87,19 +86,22 @@ class Node:
         self.id = id
         self.title = title
         self.children = children
-        self.content = content
+        self.content_list = content_list
         self.node_type = node_type
         self.theory = theory
-        self.rank_increment = rank_increment
         self._node_dict = node_dict
         self._dependencies = dependency_ids or []
         self.parent = parent
 
         self._node_dict.register(self)
 
-        if self.content:
-            if min(*[child.content for child in self.children]) < self.content:
+        # child content must be after node content
+        if self.content_list:
+            if any(self.is_after(child) for child in self.children):
                 raise ValueError("Nodes's content must be before it's child content.")
+
+    def is_after(self, other: Node) -> bool:
+        return min(self.content_list) > max(other.content_list)
 
     @property
     def dependencies(self) -> list[Node]:
@@ -113,12 +115,6 @@ class Node:
                 )
         return resolved
 
-    @property
-    def rank(self) -> int:
-        if self.parent is None:
-            raise ValueError("Node has no parent assigned and therefore no rank.")
-        return self.parent.rank + self.rank_increment
-
     def _child_content_extrema(self, min_max) -> Content | None:
         """
         Get the max/min of a Node's and all of it's children's content.
@@ -128,7 +124,15 @@ class Node:
         else:
             f = min
 
-        return f(f(self.content), *[f(child.content) for child in self.children])
+        extrema_candidates = self.content_list + [
+            child._child_content_extrema(min_max) for child in self.children
+        ]
+
+        extrema_candidates = [x for x in extrema_candidates if x]
+
+        extrema = f(extrema_candidates) if extrema_candidates else None
+
+        return extrema
 
     def content_bounds(self) -> tuple[Content | None, Content | None]:
         """
