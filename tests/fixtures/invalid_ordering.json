@@ -1,0 +1,19 @@
+{
+  "id": "root",
+  "title": "Invalid Tree",
+  "node_type": "generic",
+  "theory": false,
+  "content": [{"chunk_number": 0, "first_line": 50, "last_line": 100}],
+  "dependencies": [],
+  "children": [
+    {
+      "id": "child",
+      "title": "Child with earlier content",
+      "node_type": "generic",
+      "theory": false,
+      "content": [{"chunk_number": 0, "first_line": 1, "last_line": 40}],
+      "dependencies": [],
+      "children": []
+    }
+  ]
+}

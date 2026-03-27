@@ -105,6 +105,33 @@ class TestIsAfter:
         assert not b.is_after(a)
 
 
+class TestIsAfterContent:
+    def test_is_after_true(self):
+        td = make_tree_dict()
+        n = make_node("n", td, content_list=[make_content(0, 20, 30)])
+        bound = make_content(0, 10, 15)
+        assert n.is_after_content(bound)
+
+    def test_is_after_false(self):
+        td = make_tree_dict()
+        n = make_node("n", td, content_list=[make_content(0, 5, 10)])
+        bound = make_content(0, 20, 30)
+        assert not n.is_after_content(bound)
+
+    def test_is_after_no_content_returns_false(self):
+        td = make_tree_dict()
+        n = make_node("n", td)
+        bound = make_content(0, 1, 10)
+        assert not n.is_after_content(bound)
+
+    def test_interleaving_not_after(self):
+        td = make_tree_dict()
+        # node span min=5 is before bound first_line=10 → not after
+        n = make_node("n", td, content_list=[make_content(0, 5, 50)])
+        bound = make_content(0, 10, 20)
+        assert not n.is_after_content(bound)
+
+
 class TestIsBeforeContent:
     def test_is_before_true(self):
         td = make_tree_dict()
@@ -182,6 +209,27 @@ class TestAddChild:
         parent.add_child(child)
         assert child in parent.children
 
+    def test_add_child_sibling_interleaving_raises(self):
+        # s1 span: min=1, max=10; s2 span: min=5, max=15 — interleave
+        td = make_tree_dict()
+        parent = make_node("parent", td)
+        s1 = make_node("s1", td, content_list=[make_content(0, 1, 2), make_content(0, 10, 11)])
+        s2 = make_node("s2", td, content_list=[make_content(0, 5, 6), make_content(0, 15, 16)])
+        parent.add_child(s1)
+        with pytest.raises(ValueError):
+            parent.add_child(s2)
+
+    def test_add_child_out_of_order_insertion_succeeds(self):
+        td = make_tree_dict()
+        parent = make_node("parent", td)
+        s1 = make_node("s1", td, content_list=[make_content(0, 1, 2)])
+        s2 = make_node("s2", td, content_list=[make_content(0, 5, 6)])
+        s3 = make_node("s3", td, content_list=[make_content(0, 3, 4)])
+        parent.add_child(s1)
+        parent.add_child(s2)
+        parent.add_child(s3)  # inserted between s1 and s2 — should succeed
+        assert len(parent.children) == 3
+
 
 class TestAssignParent:
     def test__assign_parent(self):
@@ -227,6 +275,28 @@ class TestTreeDictValidate:
         child._assign_parent(parent)
         td.set_root(parent)
         td.validate()  # parent has no content — no bound to check against
+
+    def test_sibling_ordering_violation_raises(self):
+        # s1 span: min=1, max=10; s2 span: min=5, max=15 — interleave
+        td = make_tree_dict()
+        s1 = make_node("s1", td, content_list=[make_content(0, 1, 2), make_content(0, 10, 11)])
+        s2 = make_node("s2", td, content_list=[make_content(0, 5, 6), make_content(0, 15, 16)])
+        parent = make_node("parent", td, children=[s1, s2])
+        s1._assign_parent(parent)
+        s2._assign_parent(parent)
+        td.set_root(parent)
+        with pytest.raises(ValueError):
+            td.validate()
+
+    def test_valid_siblings_pass(self):
+        td = make_tree_dict()
+        s1 = make_node("s1", td, content_list=[make_content(0, 1, 10)])
+        s2 = make_node("s2", td, content_list=[make_content(0, 11, 20)])
+        parent = make_node("parent", td, children=[s1, s2])
+        s1._assign_parent(parent)
+        s2._assign_parent(parent)
+        td.set_root(parent)
+        td.validate()  # should not raise
 
 
 class TestTreeDictSetRoot:

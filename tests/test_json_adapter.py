@@ -73,6 +73,39 @@ class TestTreeFromDict:
         assert root.content_list == []
 
 
+class TestValidationDuringConstruction:
+    def test_parent_after_child_raises(self):
+        data = load_fixture("invalid_ordering.json")
+        with pytest.raises(ValueError):
+            tree_from_dict(data)
+
+    def test_sibling_interleaving_raises(self):
+        # s1 span: min=1, max=10; s2 span: min=5, max=15 — interleave
+        data = {
+            "id": "root", "title": "Root",
+            "content": [], "dependencies": [], "children": [
+                {
+                    "id": "s1", "title": "S1",
+                    "content": [
+                        {"chunk_number": 0, "first_line": 1, "last_line": 2},
+                        {"chunk_number": 0, "first_line": 10, "last_line": 11}
+                    ],
+                    "dependencies": [], "children": []
+                },
+                {
+                    "id": "s2", "title": "S2",
+                    "content": [
+                        {"chunk_number": 0, "first_line": 5, "last_line": 6},
+                        {"chunk_number": 0, "first_line": 15, "last_line": 16}
+                    ],
+                    "dependencies": [], "children": []
+                }
+            ]
+        }
+        with pytest.raises(ValueError):
+            tree_from_dict(data)
+
+
 class TestDefaultFields:
     def test_missing_node_type_defaults_to_generic(self):
         data = {

@@ -42,16 +42,31 @@ class TreeDict(Mapping):
     def validate(self) -> None:
         """
         Validate content ordering across the full tree.
-        Raises ValueError if any node's content appears after a child's content.
+        Checks rule 1 (ancestor content before child content) and
+        rule 2 (siblings have strict non-interleaving ordering).
         """
         for node in self._data.values():
+            # Rule 1
             upper_bound = node.max_self_parent_content()
             if upper_bound:
                 for child in node.children:
-                    if child.is_before_content(upper_bound):
+                    if not child.is_after_content(upper_bound):
                         raise ValueError(
                             f"Node '{node.id}' has content after child '{child.id}'."
                         )
+            # Rule 2
+            children_with_content = [
+                c for c in node.children if c._content_extrema_min()
+            ]
+            sorted_siblings = sorted(
+                children_with_content, key=lambda c: c._content_extrema_min()
+            )
+            for i in range(len(sorted_siblings) - 1):
+                if not sorted_siblings[i + 1].is_after(sorted_siblings[i]):
+                    raise ValueError(
+                        f"Sibling nodes '{sorted_siblings[i].id}' and "
+                        f"'{sorted_siblings[i + 1].id}' have interleaving content."
+                    )
 
     def __getitem__(self, node_id: str) -> Node:
         if node_id not in self._data:
@@ -127,6 +142,15 @@ class Node:
             return self_max < bound
         return False
 
+    def is_after_content(self, bound: Content) -> bool:
+        """
+        Return True iff this Node's full subtree content starts strictly after bound.
+        """
+        self_min = self._content_extrema_min()
+        if self_min:
+            return self_min > bound
+        return False
+
     @property
     def dependencies(self) -> list[Node]:
         resolved = []
@@ -163,13 +187,20 @@ class Node:
 
     def add_child(self, child: Node) -> None:
         """
-        Phase 2: add a child to an existing tree node, with local ordering validation.
+        Add a child to an existing tree node, with local ordering validation.
         """
+        # Rule 1: child content must come after ancestor content bound
         upper_bound = self.max_self_parent_content()
-        if upper_bound and child.is_before_content(upper_bound):
+        if upper_bound and not child.is_after_content(upper_bound):
             raise ValueError(
-                f"Cannot add child '{child.id}': its content precedes '{self.id}'."
+                f"Cannot add child '{child.id}': its content does not follow '{self.id}'."
             )
+        # Rule 2: child must not interleave with any existing sibling
+        for sibling in self.children:
+            if not (child.is_after(sibling) or sibling.is_after(child)):
+                raise ValueError(
+                    f"Cannot add child '{child.id}': content interleaves with sibling '{sibling.id}'."
+                )
         self.children.append(child)
         child._assign_parent(self)
 
