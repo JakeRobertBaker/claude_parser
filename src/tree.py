@@ -89,7 +89,10 @@ class Node:
         self.theory = theory
         self._node_dict = node_dict
         self._dependencies = dependency_ids or []
-        self.parent = parent
+        self.parent = None
+
+        if parent:
+            self.assign_parent(parent)
 
         self._node_dict.register(self)
 
@@ -146,3 +149,9 @@ class Node:
         Get the upper and lower content bounds of the Node's span.
         """
         return self._content_extrema_min, self._content_extrema_max
+
+    def assign_parent(self, parent: RootNode | Node):
+        if self.parent:
+            raise ValueError(f"Parent is already assigned to node {self.id}")
+        else:
+            self.parent = parent

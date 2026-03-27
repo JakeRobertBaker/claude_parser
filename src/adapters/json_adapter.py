@@ -24,10 +24,9 @@ def node_from_dict(node_dict: dict, node_registry: TreeDict) -> Node:
         id=node_dict["id"],
         title=node_dict["title"],
         children=children,
-        content=[content_from_dict(c) for c in node_dict.get("content", [])],
+        content_list=[content_from_dict(c) for c in node_dict.get("content", [])],
         node_type=NodeType(node_dict["node_type"]),
         theory=node_dict["theory"],
-        rank_increment=node_dict["rank_increment"],
         node_dict=node_registry,
         dependency_ids=node_dict.get("dependencies", []),
     )
@@ -35,6 +34,6 @@ def node_from_dict(node_dict: dict, node_registry: TreeDict) -> Node:
     node_registry.register(node)
 
     for child in children:
-        child.parent = node
+        child.add_parent(node)
 
     return node
