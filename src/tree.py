@@ -150,6 +150,25 @@ class Node:
         """
         return self._content_extrema_min, self._content_extrema_max
 
+    def add_child(self, child: Node) -> None:
+        self.children.append(child)
+        child.assign_parent(self)
+
+        node = self
+        while node is not None and isinstance(node, Node):
+            child_max = child._content_extrema_max
+            child_min = child._content_extrema_min
+
+            if child_max and "_content_extrema_max" in node.__dict__:
+                if node.__dict__["_content_extrema_max"] is None or child_max > node.__dict__["_content_extrema_max"]:
+                    node.__dict__["_content_extrema_max"] = child_max
+
+            if child_min and "_content_extrema_min" in node.__dict__:
+                if node.__dict__["_content_extrema_min"] is None or child_min < node.__dict__["_content_extrema_min"]:
+                    node.__dict__["_content_extrema_min"] = child_min
+
+            node = node.parent
+
     def assign_parent(self, parent: RootNode | Node):
         if self.parent:
             raise ValueError(f"Parent is already assigned to node {self.id}")
