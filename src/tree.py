@@ -230,34 +230,58 @@ class Node:
 
         self._validate_rule_2(child)
 
-    def _validate_rule_2(self, child: Node):
+    def _validate_rule_2(self, child: Node) -> None:
         """
-        Rule 2: All Node's content span are disjoint to their siblings.
+        Rule 2: All Node's content spans are disjoint to their siblings.
+        Adding a child can grow the parent's span, which may cause interleaving
+        at the grandparent level. Recurse upward until the span stops growing
+        or we hit the root.
         """
-
-        content_bound = child.content_bound()
-        if not content_bound:
+        child_bound = child.content_bound()
+        if not child_bound:
             return
 
-        content_bound_changed = True
-        parent = self
-
-        for sibling in parent.children:
-            sibling_content_bound = sibling.content_bound()
-            if sibling_content_bound and sibling_content_bound.intersect(
-                content_bound
-            ):
+        # Check child against its future siblings (child not yet in self.children)
+        for sibling in self.children:
+            sibling_bound = sibling.content_bound()
+            if sibling_bound and sibling_bound.intersect(child_bound):
                 raise ValueError(
-                    f"Cannot add child '{child.id}': content interleaves with sibling '{sibling.id}'."
+                    f"Cannot add child '{child.id}': content interleaves "
+                    f"with sibling '{sibling.id}'."
                 )
 
-        # passed all the siblings and have not found intersection
-        # with the addition of this new Node the parent's content span may have grown. 
-        # If that has grown we need to validate.
-        new_content_bound = content_bound.union(parent.content_bound())
-        # if parent content bound grown
-        if new_contnet_bound != content_bound:
-        # can we make this reccursive validate(parent's new content bound, parent's sibling content bounds)
+        # Propagate upward if parent's span would grow
+        Node._propagate_span_check(child_bound, self, child.id)
+
+    @staticmethod
+    def _propagate_span_check(
+        new_bound: ContentBound, node: Node, child_id: str
+    ) -> None:
+        """
+        Check whether adding new_bound to node's subtree would grow node's
+        span and cause interleaving with node's siblings. Recurse upward.
+        """
+        if node.parent is None:
+            return
+
+        old_node_bound = node.content_bound()
+        new_node_bound = new_bound.union(old_node_bound)
+        if new_node_bound == old_node_bound:
+            return
+
+        # node's span grew — check against node's siblings (skip node itself)
+        for sibling in node.parent.children:
+            if sibling is node:
+                continue
+            sibling_bound = sibling.content_bound()
+            if sibling_bound and sibling_bound.intersect(new_node_bound):
+                raise ValueError(
+                    f"Cannot add child '{child_id}': would cause "
+                    f"'{node.id}' to interleave with '{sibling.id}'."
+                )
+
+        # Recurse: node.parent's span may also have grown
+        Node._propagate_span_check(new_node_bound, node.parent, child_id)
 
 
     def _assign_parent(self, parent: Node) -> None:

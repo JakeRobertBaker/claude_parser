@@ -235,6 +235,157 @@ class TestAddChild:
         assert len(parent.children) == 3
 
 
+class TestRule2Propagation:
+    """
+    Tests for rule 2 checking that propagates upward when adding a child
+    grows a parent's content span.
+    """
+
+    def test_plan_example_section_in_wrong_chapter(self):
+        """
+        plan.md example: Root -> Ch1, Ch2, Ch3 with sections.
+        Adding sec 3.5 to Ch1 makes Ch1 span (1.1, 3.5) which interleaves
+        with Ch2 span (2.1, 2.1) and Ch3 span (3.1, 3.2).
+        """
+        td = make_tree_dict()
+        # Build chapters with sections
+        sec_1_1 = make_node("s1.1", td, content_list=[make_content(0, 11, 12)])
+        sec_1_2 = make_node("s1.2", td, content_list=[make_content(0, 13, 14)])
+        ch1 = make_node("ch1", td, children=[sec_1_1, sec_1_2])
+
+        sec_2_1 = make_node("s2.1", td, content_list=[make_content(0, 21, 22)])
+        ch2 = make_node("ch2", td, children=[sec_2_1])
+
+        sec_3_1 = make_node("s3.1", td, content_list=[make_content(0, 31, 32)])
+        sec_3_2 = make_node("s3.2", td, content_list=[make_content(0, 33, 34)])
+        ch3 = make_node("ch3", td, children=[sec_3_1, sec_3_2])
+
+        root = make_node("root", td, children=[ch1, ch2, ch3])
+
+        # Adding sec 3.5 content to ch1 — locally fine among ch1's children,
+        # but makes ch1 span interleave with ch2 and ch3
+        sec_3_5 = make_node("s3.5", td, content_list=[make_content(0, 35, 36)])
+        with pytest.raises(ValueError):
+            ch1.add_child(sec_3_5)
+
+    def test_propagation_valid_no_span_growth(self):
+        """
+        Adding a child whose content is within the parent's existing span
+        does not grow the span — no propagation needed.
+        """
+        td = make_tree_dict()
+        sec_a = make_node("sa", td, content_list=[make_content(0, 1, 10)])
+        sec_c = make_node("sc", td, content_list=[make_content(0, 21, 30)])
+        ch1 = make_node("ch1", td, children=[sec_a, sec_c])
+
+        sec_x = make_node("sx", td, content_list=[make_content(0, 31, 40)])
+        ch2 = make_node("ch2", td, children=[sec_x])
+
+        root = make_node("root", td, children=[ch1, ch2])
+
+        # New child fits within ch1's existing span — no growth
+        sec_b = make_node("sb", td, content_list=[make_content(0, 11, 20)])
+        ch1.add_child(sec_b)  # should succeed
+        assert sec_b in ch1.children
+
+    def test_propagation_span_grows_but_still_valid(self):
+        """
+        Adding a child grows the parent's span, but the new span
+        still doesn't interleave with siblings at the grandparent level.
+        """
+        td = make_tree_dict()
+        sec_a = make_node("sa", td, content_list=[make_content(0, 1, 10)])
+        ch1 = make_node("ch1", td, children=[sec_a])
+
+        sec_x = make_node("sx", td, content_list=[make_content(0, 31, 40)])
+        ch2 = make_node("ch2", td, children=[sec_x])
+
+        root = make_node("root", td, children=[ch1, ch2])
+
+        # Grows ch1 span from (1,10) to (1,20) — still before ch2 (31,40)
+        sec_b = make_node("sb", td, content_list=[make_content(0, 11, 20)])
+        ch1.add_child(sec_b)  # should succeed
+        assert sec_b in ch1.children
+
+    def test_propagation_three_levels_deep(self):
+        """
+        Violation detected three levels up: adding a leaf to a subsection
+        causes the chapter span to interleave with a sibling chapter.
+        """
+        td = make_tree_dict()
+        # Ch1 -> Sec1.1 -> Subsec1.1.1
+        subsec = make_node("subsec1.1.1", td, content_list=[make_content(0, 1, 5)])
+        sec_1_1 = make_node("sec1.1", td, children=[subsec])
+        ch1 = make_node("ch1", td, children=[sec_1_1])
+
+        # Ch2 with content at lines 20-30
+        sec_2_1 = make_node("sec2.1", td, content_list=[make_content(0, 20, 30)])
+        ch2 = make_node("ch2", td, children=[sec_2_1])
+
+        root = make_node("root", td, children=[ch1, ch2])
+
+        # Adding content at line 25 to subsec level — grows all the way up,
+        # ch1 span becomes (1, 25) which interleaves with ch2 span (20, 30)
+        leaf = make_node("leaf", td, content_list=[make_content(0, 25, 26)])
+        with pytest.raises(ValueError):
+            sec_1_1.add_child(leaf)
+
+    def test_propagation_child_no_content_no_error(self):
+        """
+        Adding a child with no content never causes interleaving.
+        """
+        td = make_tree_dict()
+        sec_a = make_node("sa", td, content_list=[make_content(0, 1, 10)])
+        ch1 = make_node("ch1", td, children=[sec_a])
+        sec_b = make_node("sb", td, content_list=[make_content(0, 20, 30)])
+        ch2 = make_node("ch2", td, children=[sec_b])
+        root = make_node("root", td, children=[ch1, ch2])
+
+        empty = make_node("empty", td)
+        ch1.add_child(empty)  # should succeed
+        assert empty in ch1.children
+
+    def test_propagation_init_catches_violation(self):
+        """
+        Same violation caught during __init__ construction with children=[...].
+        """
+        td = make_tree_dict()
+        sec_1_1 = make_node("s1.1", td, content_list=[make_content(0, 11, 12)])
+        sec_3_5 = make_node("s3.5", td, content_list=[make_content(0, 35, 36)])
+        ch1 = make_node("ch1", td, children=[sec_1_1, sec_3_5])
+
+        sec_2_1 = make_node("s2.1", td, content_list=[make_content(0, 21, 22)])
+        ch2 = make_node("ch2", td, children=[sec_2_1])
+
+        with pytest.raises(ValueError):
+            make_node("root", td, children=[ch1, ch2])
+
+    def test_disjoint_content_but_overlapping_spans(self):
+        """
+        plan.md note: nodes with disjoint content can still violate rule 2.
+        Node A has content [1, 2, 3, 5] and node B has content [4, 6].
+        They are disjoint but spans overlap: A=(1,5) B=(4,6).
+        """
+        td = make_tree_dict()
+        a = make_node(
+            "a",
+            td,
+            content_list=[
+                make_content(0, 1, 1),
+                make_content(0, 2, 2),
+                make_content(0, 3, 3),
+                make_content(0, 5, 5),
+            ],
+        )
+        b = make_node(
+            "b",
+            td,
+            content_list=[make_content(0, 4, 4), make_content(0, 6, 6)],
+        )
+        with pytest.raises(ValueError):
+            make_node("parent", td, children=[a, b])
+
+
 class TestAssignParent:
     def test__assign_parent(self):
         td = make_tree_dict()
