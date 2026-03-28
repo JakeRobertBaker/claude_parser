@@ -62,10 +62,9 @@ class TestTreeFromDict:
         assert td["def_metric"].theory is True
         assert td["ch01"].theory is False
 
-    def test_validate_passes_on_fixture(self):
+    def test_fixture_constructs_without_error(self):
         data = load_fixture("basic_tree.json")
-        _, td = tree_from_dict(data)
-        td.validate()  # should not raise
+        _, td = tree_from_dict(data)  # validation happens during construction
 
     def test_root_no_content(self):
         data = load_fixture("basic_tree.json")

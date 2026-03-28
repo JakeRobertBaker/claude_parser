@@ -39,35 +39,6 @@ class TreeDict(Mapping):
             raise KeyError(f"Node with id '{node_id}' not found.")
         del self._data[node_id]
 
-    def validate(self) -> None:
-        """
-        Validate content ordering across the full tree.
-        Checks rule 1 (ancestor content before child content) and
-        rule 2 (siblings have strict non-interleaving ordering).
-        """
-        for node in self._data.values():
-            # Rule 1
-            upper_bound = node.max_ancestor_content()
-            if upper_bound:
-                for child in node.children:
-                    if not child.is_after_content(upper_bound):
-                        raise ValueError(
-                            f"Node '{node.id}' has content after child '{child.id}'."
-                        )
-            # Rule 2
-            children_with_content = [
-                c for c in node.children if c._content_extrema_min()
-            ]
-            sorted_siblings = sorted(
-                children_with_content, key=lambda c: c._content_extrema_min()
-            )
-            for i in range(len(sorted_siblings) - 1):
-                if not sorted_siblings[i + 1].is_after(sorted_siblings[i]):
-                    raise ValueError(
-                        f"Sibling nodes '{sorted_siblings[i].id}' and "
-                        f"'{sorted_siblings[i + 1].id}' have interleaving content."
-                    )
-
     def __getitem__(self, node_id: str) -> Node:
         if node_id not in self._data:
             raise KeyError(f"Node with id '{node_id}' not found.")

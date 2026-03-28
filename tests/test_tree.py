@@ -404,15 +404,14 @@ class TestAssignParent:
             child._assign_parent(p2)
 
 
-class TestTreeDictValidate:
-    def test_valid_tree_passes(self):
+class TestConstructionValidation:
+    def test_valid_tree_constructs(self):
         td = make_tree_dict()
         child = make_node("child", td, content_list=[make_content(0, 51, 100)])
         parent = make_node(
             "parent", td, content_list=[make_content(0, 1, 50)], children=[child]
         )
-        td.set_root(parent)
-        td.validate()  # should not raise
+        assert child in parent.children
 
     def test_ordering_violation_raises(self):
         td = make_tree_dict()
@@ -427,8 +426,7 @@ class TestTreeDictValidate:
         td = make_tree_dict()
         child = make_node("child", td, content_list=[make_content(0, 1, 10)])
         parent = make_node("parent", td, children=[child])
-        td.set_root(parent)
-        td.validate()  # parent has no content — no bound to check against
+        assert child in parent.children
 
     def test_sibling_ordering_violation_raises(self):
         # s1 span: min=1, max=10; s2 span: min=5, max=15 — interleave
@@ -442,13 +440,12 @@ class TestTreeDictValidate:
         with pytest.raises(ValueError):
             make_node("parent", td, children=[s1, s2])
 
-    def test_valid_siblings_pass(self):
+    def test_valid_siblings_construct(self):
         td = make_tree_dict()
         s1 = make_node("s1", td, content_list=[make_content(0, 1, 10)])
         s2 = make_node("s2", td, content_list=[make_content(0, 11, 20)])
         parent = make_node("parent", td, children=[s1, s2])
-        td.set_root(parent)
-        td.validate()  # should not raise
+        assert len(parent.children) == 2
 
 
 class TestTreeDictSetRoot:
