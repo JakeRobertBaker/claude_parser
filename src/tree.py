@@ -123,9 +123,7 @@ class Node:
         self._node_dict.register(self)
 
         for child in children:
-            self._validate_child(child)
-            self.children.append(child)
-            child._assign_parent(self)
+            self.add_child(child)
 
     def max_ancestor_content(self) -> Content | None:
         """
@@ -217,8 +215,8 @@ class Node:
 
     def _validate_child(self, child: Node) -> None:
         """
-        Check rule 1 (child content after ancestor content) and
-        rule 2 (child does not interleave with existing siblings).
+        Validate rules 1. and 2.
+        Rule 1: A Node's content must be greater than all it's ancestors.
         """
         # Rule 1
         upper_bound = self.max_ancestor_content()
@@ -226,7 +224,6 @@ class Node:
             raise ValueError(
                 f"Cannot add child '{child.id}': its content does not follow '{self.id}'."
             )
-        # Rule 2
 
         self._validate_rule_2(child)
 
@@ -282,7 +279,6 @@ class Node:
 
         # Recurse: node.parent's span may also have grown
         Node._propagate_span_check(new_node_bound, node.parent, child_id)
-
 
     def _assign_parent(self, parent: Node) -> None:
         if self.parent is not None:
