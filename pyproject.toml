@@ -16,6 +16,8 @@ packages = ["src/claude_parser"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.15.8",
+    "ty>=0.0.26",
 ]
 
 [tool.pytest.ini_options]

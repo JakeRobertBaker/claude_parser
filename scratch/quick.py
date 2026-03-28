@@ -1,12 +1,14 @@
-from claude_parser.content import Content
-from claude_parser.tree import Node, NodeType, TreeDict
+from claude_parser.adapters.chunk_lines.content import Content
+from claude_parser.domain.node import Node, NodeType, TreeDict
 
 td = TreeDict()
 
-def c(chunk, first, last):
+
+def c(chunk, first, last) -> Content:
     return Content(chunk_number=chunk, first_line=first, last_line=last)
 
-def n(id, children=None, content=None, **kw):
+
+def n(id, children=None, content=None, **kw) -> Node:
     return Node(
         id=id,
         title=id,
@@ -16,6 +18,7 @@ def n(id, children=None, content=None, **kw):
         theory=kw.get("theory", False),
         node_dict=td,
     )
+
 
 # Example: build a small tree
 sec1 = n("sec1", content=[c(0, 1, 10)])

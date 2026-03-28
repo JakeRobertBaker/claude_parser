@@ -1,6 +1,6 @@
 import pytest
-from claude_parser.content import Content
-from claude_parser.tree import Node, NodeType, TreeDict
+from claude_parser.adapters.chunk_lines.content import Content
+from claude_parser.domain.node import Node, NodeType, TreeDict
 
 
 def make_tree_dict() -> TreeDict:
@@ -169,7 +169,7 @@ class TestMaxAncestorContent:
     def test_traverses_ancestors(self):
         td = make_tree_dict()
         child = make_node("child", td, content_list=[make_content(0, 51, 100)])
-        parent = make_node(
+        _parent = make_node(
             "parent", td, content_list=[make_content(0, 1, 50)], children=[child]
         )
         result = child.max_ancestor_content()
@@ -179,7 +179,7 @@ class TestMaxAncestorContent:
         td = make_tree_dict()
         grandchild = make_node("gc", td, content_list=[make_content(0, 51, 60)])
         child = make_node("child", td, children=[grandchild])
-        parent = make_node(
+        _parent = make_node(
             "parent", td, content_list=[make_content(0, 1, 100)], children=[child]
         )
         result = grandchild.max_ancestor_content()
@@ -260,7 +260,7 @@ class TestRule2Propagation:
         sec_3_2 = make_node("s3.2", td, content_list=[make_content(0, 33, 34)])
         ch3 = make_node("ch3", td, children=[sec_3_1, sec_3_2])
 
-        root = make_node("root", td, children=[ch1, ch2, ch3])
+        _root = make_node("root", td, children=[ch1, ch2, ch3])
 
         # Adding sec 3.5 content to ch1 — locally fine among ch1's children,
         # but makes ch1 span interleave with ch2 and ch3
@@ -281,7 +281,7 @@ class TestRule2Propagation:
         sec_x = make_node("sx", td, content_list=[make_content(0, 31, 40)])
         ch2 = make_node("ch2", td, children=[sec_x])
 
-        root = make_node("root", td, children=[ch1, ch2])
+        _root = make_node("root", td, children=[ch1, ch2])
 
         # New child fits within ch1's existing span — no growth
         sec_b = make_node("sb", td, content_list=[make_content(0, 11, 20)])
@@ -300,7 +300,7 @@ class TestRule2Propagation:
         sec_x = make_node("sx", td, content_list=[make_content(0, 31, 40)])
         ch2 = make_node("ch2", td, children=[sec_x])
 
-        root = make_node("root", td, children=[ch1, ch2])
+        _root = make_node("root", td, children=[ch1, ch2])
 
         # Grows ch1 span from (1,10) to (1,20) — still before ch2 (31,40)
         sec_b = make_node("sb", td, content_list=[make_content(0, 11, 20)])
@@ -322,7 +322,7 @@ class TestRule2Propagation:
         sec_2_1 = make_node("sec2.1", td, content_list=[make_content(0, 20, 30)])
         ch2 = make_node("ch2", td, children=[sec_2_1])
 
-        root = make_node("root", td, children=[ch1, ch2])
+        _root = make_node("root", td, children=[ch1, ch2])
 
         # Adding content at line 25 to subsec level — grows all the way up,
         # ch1 span becomes (1, 25) which interleaves with ch2 span (20, 30)
@@ -339,7 +339,7 @@ class TestRule2Propagation:
         ch1 = make_node("ch1", td, children=[sec_a])
         sec_b = make_node("sb", td, content_list=[make_content(0, 20, 30)])
         ch2 = make_node("ch2", td, children=[sec_b])
-        root = make_node("root", td, children=[ch1, ch2])
+        _root = make_node("root", td, children=[ch1, ch2])
 
         empty = make_node("empty", td)
         ch1.add_child(empty)  # should succeed

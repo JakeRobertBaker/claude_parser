@@ -1,6 +1,6 @@
-from dataclasses import dataclass, field
 import bisect
 from collections import defaultdict
+from claude_parser.adapters.chunk_lines.content import Content
 
 LineRange = tuple[int, int]
 
@@ -35,36 +35,3 @@ class ContentPartition:
 
         self.data[partition_id] = content
         boundaries.insert(idx, new_range)
-
-
-@dataclass(order=True)
-class Content:
-    chunk_number: int
-    first_line: int
-    last_line: int = field(compare=False)
-
-    @property
-    def n_lines(self) -> int:
-        return self.last_line - self.first_line + 1
-
-    def __bool__(self) -> bool:
-        return True
-
-
-@dataclass
-class ContentBound:
-    lower: Content
-    upper: Content
-
-    def union(self, x: ContentBound | None) -> ContentBound:
-        if x is None:
-            return self
-        return ContentBound(min(self.lower, x.lower), max(self.upper, x.upper))
-
-    def intersect(self, x: ContentBound | None) -> ContentBound | None:
-        if x is None:
-            return None
-        lower = max(self.lower, x.lower)
-        upper = min(self.upper, x.upper)
-
-        return ContentBound(lower, upper) if lower <= upper else None

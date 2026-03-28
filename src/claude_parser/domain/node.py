@@ -1,7 +1,8 @@
 from __future__ import annotations
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from enum import Enum
-from claude_parser.content import Content, ContentBound
+from claude_parser.domain.ports import ContentBase
+from claude_parser.domain.content_bound import ContentBound
 
 
 class NodeType(Enum):
@@ -59,7 +60,7 @@ class Node:
     id: str
     title: str
     children: list[Node]
-    content_list: list[Content]
+    content_list: list[ContentBase]
     node_type: NodeType
     theory: bool
     parent: Node | None
@@ -71,7 +72,7 @@ class Node:
         id: str,
         title: str,
         children: list[Node],
-        content_list: list[Content] | None,
+        content_list: Sequence[ContentBase] | None,
         node_type: NodeType,
         theory: bool,
         node_dict: TreeDict,
@@ -81,7 +82,7 @@ class Node:
         self.id = id
         self.title = title
         self.children = []
-        self.content_list = content_list or []
+        self.content_list: list[ContentBase] = list(content_list) if content_list else []
         self.node_type = node_type
         self.theory = theory
         self._node_dict = node_dict
@@ -96,7 +97,7 @@ class Node:
         for child in children:
             self.add_child(child)
 
-    def max_ancestor_content(self) -> Content | None:
+    def max_ancestor_content(self) -> ContentBase | None:
         """
         Get the maximum of this Node's content and its ancestors.
         """
@@ -117,7 +118,7 @@ class Node:
             return self_min > other_max
         return False
 
-    def is_before_content(self, bound: Content) -> bool:
+    def is_before_content(self, bound: ContentBase) -> bool:
         """
         Return True iff this Node's full subtree content is all strictly before bound.
         """
@@ -126,7 +127,7 @@ class Node:
             return self_max < bound
         return False
 
-    def is_after_content(self, bound: Content) -> bool:
+    def is_after_content(self, bound: ContentBase) -> bool:
         """
         Return True iff this Node's full subtree content starts strictly after bound.
         """
@@ -147,7 +148,7 @@ class Node:
                 )
         return resolved
 
-    def _content_extrema_max(self) -> Content | None:
+    def _content_extrema_max(self) -> ContentBase | None:
         """Get the max Content of this Node's and all of its descendant's content."""
         candidates = self.content_list + [
             child._content_extrema_max() for child in self.children
@@ -155,7 +156,7 @@ class Node:
         candidates = [x for x in candidates if x]
         return max(candidates) if candidates else None
 
-    def _content_extrema_min(self) -> Content | None:
+    def _content_extrema_min(self) -> ContentBase | None:
         """Get the min Content of this Node's and all of its descendants's content."""
         candidates = self.content_list + [
             child._content_extrema_min() for child in self.children

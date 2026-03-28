@@ -1,9 +1,9 @@
 import json
 import pytest
 from pathlib import Path
-from claude_parser.content import Content
-from claude_parser.tree import NodeType, TreeDict
-from claude_parser.adapters.json_adapter import tree_from_dict, node_from_dict
+from claude_parser.adapters.chunk_lines.content import Content
+from claude_parser.domain.node import NodeType, TreeDict
+from claude_parser.adapters.chunk_lines.json_adapter import tree_from_dict, node_from_dict
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -47,6 +47,7 @@ class TestTreeFromDict:
         ch01 = td["ch01"]
         assert len(ch01.content_list) == 1
         c = ch01.content_list[0]
+        assert isinstance(c, Content)
         assert c.chunk_number == 0
         assert c.first_line == 1
         assert c.last_line == 50
