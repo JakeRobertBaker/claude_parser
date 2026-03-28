@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections.abc import Callable
+from typing import Any
 from claude_parser.domain.ports import ContentBase
 from claude_parser.domain.node import Node, TreeDict, NodeType
 
@@ -34,6 +35,29 @@ def node_from_dict(
     return node
 
 
+def node_to_dict(
+    node: Node,
+    content_serializer: Callable[[Any], dict],
+) -> dict:
+    result: dict = {
+        "id": node.id,
+        "title": node.title,
+    }
+    if node.content_list:
+        result["content"] = [content_serializer(c) for c in node.content_list]
+    if node.node_type != NodeType.GENERIC:
+        result["node_type"] = node.node_type.value
+    if node.theory:
+        result["theory"] = True
+    if node._dependencies:
+        result["dependencies"] = node._dependencies
+    if node.children:
+        result["children"] = [
+            node_to_dict(child, content_serializer) for child in node.children
+        ]
+    return result
+
+
 def tree_from_dict(
     data: dict,
     content_deserializer: Callable[[dict], ContentBase],
@@ -46,3 +70,10 @@ def tree_from_dict(
     root = node_from_dict(data, node_registry, content_deserializer)
     node_registry.set_root(root)
     return root, node_registry
+
+
+def tree_to_dict(
+    root: Node,
+    content_serializer: Callable[[Any], dict],
+) -> dict:
+    return node_to_dict(root, content_serializer)

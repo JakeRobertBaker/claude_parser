@@ -177,6 +177,38 @@ class Node:
         else:
             return None
 
+    def add_content(self, content: ContentBase) -> None:
+        """
+        Add content to this node, with rule validation.
+        Content must come after all ancestor content (Rule 1),
+        and must not cause sibling span interleaving (Rule 2).
+        """
+        # Rule 1: content must be after max ancestor content
+        upper_bound = self.max_ancestor_content()
+        if upper_bound and not content > upper_bound:
+            raise ValueError(
+                f"Cannot add content to '{self.id}': content does not follow "
+                f"ancestor content."
+            )
+
+        # Rule 2: check span growth doesn't cause sibling interleaving
+        new_bound = ContentBound(content, content)
+        old_bound = self.content_bound()
+        merged = new_bound.union(old_bound)
+        if merged != old_bound and self.parent is not None:
+            for sibling in self.parent.children:
+                if sibling is self:
+                    continue
+                sib_bound = sibling.content_bound()
+                if sib_bound and sib_bound.intersect(merged):
+                    raise ValueError(
+                        f"Cannot add content to '{self.id}': would cause "
+                        f"interleaving with sibling '{sibling.id}'."
+                    )
+            Node._propagate_span_check(merged, self.parent, self.id)
+
+        self.content_list.append(content)
+
     def add_child(self, child: Node) -> None:
         """
         Add a child to an existing tree node, with local ordering validation.

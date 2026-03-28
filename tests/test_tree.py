@@ -494,3 +494,82 @@ class TestDependencies:
         )
         with pytest.raises(KeyError):
             _ = n.dependencies
+
+
+class TestAddContent:
+    def test_add_content_to_empty_node(self):
+        td = make_tree_dict()
+        root = make_node("root", td)
+        td.set_root(root)
+        child = make_node("ch1", td)
+        root.add_child(child)
+
+        c = make_content(0, 1, 10)
+        child.add_content(c)
+        assert child.content_list == [c]
+
+    def test_add_content_to_node_with_existing_content(self):
+        td = make_tree_dict()
+        root = make_node("root", td)
+        td.set_root(root)
+        child = make_node("ch1", td, content_list=[make_content(0, 1, 10)])
+        root.add_child(child)
+
+        c2 = make_content(0, 11, 20)
+        child.add_content(c2)
+        assert len(child.content_list) == 2
+
+    def test_add_content_rule1_violation(self):
+        """Content must come after ancestor content."""
+        td = make_tree_dict()
+        root = make_node("root", td)
+        td.set_root(root)
+        child = make_node("ch1", td)
+        root.add_child(child)
+
+        # Give root content first, then try to add earlier content to child
+        root.add_content(make_content(0, 50, 100))
+        with pytest.raises(ValueError, match="does not follow"):
+            child.add_content(make_content(0, 1, 10))
+
+    def test_add_content_causes_sibling_interleaving(self):
+        """Adding content to a node can grow its span and interleave with siblings."""
+        td = make_tree_dict()
+        root = make_node("root", td)
+        td.set_root(root)
+        ch1 = make_node("ch1", td, content_list=[make_content(0, 1, 10)])
+        ch2 = make_node("ch2", td, content_list=[make_content(0, 20, 30)])
+        root.add_child(ch1)
+        root.add_child(ch2)
+
+        # Adding content at line 25 to ch1 would make ch1's span (1,25)
+        # which interleaves with ch2's span (20,30)
+        with pytest.raises(ValueError, match="interleaving"):
+            ch1.add_content(make_content(0, 25, 28))
+
+    def test_add_content_propagates_upward(self):
+        """Span growth from add_content propagates to grandparent level."""
+        td = make_tree_dict()
+        root = make_node("root", td)
+        td.set_root(root)
+        ch1 = make_node("ch1", td)
+        ch2 = make_node("ch2", td, content_list=[make_content(1, 1, 50)])
+        root.add_child(ch1)
+        root.add_child(ch2)
+
+        sec = make_node("sec1_1", td, content_list=[make_content(0, 1, 10)])
+        ch1.add_child(sec)
+
+        # Adding chunk 1 content to sec would grow ch1's span into ch2's territory
+        with pytest.raises(ValueError, match="interleave"):
+            sec.add_content(make_content(1, 5, 20))
+
+    def test_add_content_no_parent_skips_rule2(self):
+        """Root node with no parent: rule 2 sibling check is skipped."""
+        td = make_tree_dict()
+        root = make_node("root", td)
+        td.set_root(root)
+
+        root.add_content(make_content(0, 1, 10))
+        root.add_content(make_content(0, 20, 30))
+        assert len(root.content_list) == 2
