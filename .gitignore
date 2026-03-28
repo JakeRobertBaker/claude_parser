@@ -1,1 +1,16 @@
 raw/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.env
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/
+*.log
