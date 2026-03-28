@@ -56,16 +56,15 @@ class TestContentBounds:
     def test_bounds_single_node(self):
         td = make_tree_dict()
         n = make_node("n1", td, content_list=[make_content(0, 5, 20)])
-        lo, hi = n.content_span()
-        assert lo == make_content(0, 5, 20)
-        assert hi == make_content(0, 5, 20)
+        bound = n.content_bound()
+        assert bound is not None
+        assert bound.lower == make_content(0, 5, 20)
+        assert bound.upper == make_content(0, 5, 20)
 
     def test_bounds_no_content(self):
         td = make_tree_dict()
         n = make_node("n1", td)
-        lo, hi = n.content_span()
-        assert lo is None
-        assert hi is None
+        assert n.content_bound() is None
 
     def test_bounds_includes_children(self):
         td = make_tree_dict()
@@ -73,17 +72,19 @@ class TestContentBounds:
         parent = make_node(
             "parent", td, content_list=[make_content(0, 1, 50)], children=[child]
         )
-        lo, hi = parent.content_span()
-        assert lo == make_content(0, 1, 50)
-        assert hi == make_content(0, 51, 100)
+        bound = parent.content_bound()
+        assert bound is not None
+        assert bound.lower == make_content(0, 1, 50)
+        assert bound.upper == make_content(0, 51, 100)
 
     def test_bounds_child_only_content(self):
         td = make_tree_dict()
         child = make_node("child", td, content_list=[make_content(0, 10, 20)])
         parent = make_node("parent", td, children=[child])
-        lo, hi = parent.content_span()
-        assert lo == make_content(0, 10, 20)
-        assert hi == make_content(0, 10, 20)
+        bound = parent.content_bound()
+        assert bound is not None
+        assert bound.lower == make_content(0, 10, 20)
+        assert bound.upper == make_content(0, 10, 20)
 
 
 class TestIsAfter:
@@ -154,16 +155,16 @@ class TestIsBeforeContent:
         assert not n.is_before_content(bound)
 
 
-class TestMaxSelfParentContent:
+class TestMaxAncestorContent:
     def test_no_parent_no_content(self):
         td = make_tree_dict()
         n = make_node("n", td)
-        assert n.max_self_parent_content() is None
+        assert n.max_ancestor_content() is None
 
     def test_self_content_only(self):
         td = make_tree_dict()
         n = make_node("n", td, content_list=[make_content(0, 1, 50)])
-        assert n.max_self_parent_content() == make_content(0, 1, 50)
+        assert n.max_ancestor_content() == make_content(0, 1, 50)
 
     def test_traverses_ancestors(self):
         td = make_tree_dict()
@@ -172,9 +173,7 @@ class TestMaxSelfParentContent:
             "parent", td, content_list=[make_content(0, 1, 50)], children=[child]
         )
         child._assign_parent(parent)
-        # child's max_self_parent_content should include parent's max (chunk 0, line 1)
-        # but parent max is line 1 which is less than child's own line 51
-        result = child.max_self_parent_content()
+        result = child.max_ancestor_content()
         assert result == make_content(0, 51, 100)
 
     def test_ancestor_max_wins(self):
@@ -186,9 +185,7 @@ class TestMaxSelfParentContent:
         )
         child._assign_parent(parent)
         grandchild._assign_parent(child)
-        # grandchild has no own content > parent's max, parent max is line 1
-        # max_self_parent_content for grandchild = max(gc content, parent max via child)
-        result = grandchild.max_self_parent_content()
+        result = grandchild.max_ancestor_content()
         assert result == make_content(0, 51, 60)
 
 

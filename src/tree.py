@@ -85,12 +85,22 @@ class TreeDict(Mapping):
 
 
 class Node:
+    id: str
+    title: str
+    children: list[Node]
+    content_list: list[Content]
+    node_type: NodeType
+    theory: bool
+    parent: Node | None
+    _node_dict: TreeDict
+    _dependencies: list[str]
+
     def __init__(
         self,
         id: str,
         title: str,
         children: list[Node],
-        content_list: list[Content],
+        content_list: list[Content] | None,
         node_type: NodeType,
         theory: bool,
         node_dict: TreeDict,
@@ -100,7 +110,7 @@ class Node:
         self.id = id
         self.title = title
         self.children = children
-        self.content_list = content_list
+        self.content_list = content_list or []
         self.node_type = node_type
         self.theory = theory
         self._node_dict = node_dict
@@ -179,12 +189,6 @@ class Node:
         candidates = [x for x in candidates if x]
         return min(candidates) if candidates else None
 
-    def content_span(self) -> tuple[Content | None, Content | None]:
-        """
-        Get the upper and lower content bounds of the Node's span.
-        """
-        return self._content_extrema_min(), self._content_extrema_max()
-
     def content_bound(self) -> ContentBound | None:
         """
         Get the upper and lower content bounds of the Node's span.
@@ -213,20 +217,20 @@ class Node:
         self.children.append(child)
         child._assign_parent(self)
 
-    def _rule_2_check(self, child: Node):
-        content_span_new = True
-        parent = self
+    def _rule_2_check(self, child: Node) -> None:
         new_content_bound = child.content_bound()
         # Compare new content span to neighbours.
         # We have already assumed that the neighbours have disjoint spans.
         # Therefore only need to check that new content span is disjoint to it's neighbours
+        parent = self
         for sibling in parent.children:
             sibling_content_bound = sibling.content_bound()
-            if isinstance(sibling_content_bound, ContentBound):
-                if sibling_content_bound.intersect(new_content_bound):
-                    raise ValueError(
-                        f"Cannot add child '{child.id}': content interleaves with sibling '{sibling.id}'."
-                    )
+            if sibling_content_bound and sibling_content_bound.intersect(
+                new_content_bound
+            ):
+                raise ValueError(
+                    f"Cannot add child '{child.id}': content interleaves with sibling '{sibling.id}'."
+                )
 
     def _assign_parent(self, parent: Node) -> None:
         if self.parent is not None:

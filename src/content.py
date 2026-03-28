@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import bisect
 from collections import defaultdict
 
@@ -37,30 +37,15 @@ class ContentPartition:
         boundaries.insert(idx, new_range)
 
 
+@dataclass(order=True)
 class Content:
-    def __init__(self, chunk_number: int, first_line: int, last_line: int):
-        self.chunk_number = chunk_number
-        self.first_line = first_line
-        self.last_line = last_line
+    chunk_number: int
+    first_line: int
+    last_line: int = field(compare=False)
 
     @property
     def n_lines(self) -> int:
         return self.last_line - self.first_line + 1
-
-    def __lt__(self, other: Content) -> bool:
-        if self.chunk_number != other.chunk_number:
-            return self.chunk_number < other.chunk_number
-        return self.first_line < other.first_line
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Content):
-            return NotImplemented
-        return (self.chunk_number == other.chunk_number) and (
-            self.first_line == other.first_line
-        )
-
-    def __le__(self, other: Content) -> bool:
-        return self == other or self < other
 
     def __bool__(self) -> bool:
         return True
@@ -71,10 +56,14 @@ class ContentBound:
     lower: Content
     upper: Content
 
-    def union(self, x: ContentBound):
-        return ContentBound(min(self.lower, x.lower), max(self.lower, x.upper))
+    def union(self, x: ContentBound | None) -> ContentBound:
+        if x is None:
+            return self
+        return ContentBound(min(self.lower, x.lower), max(self.upper, x.upper))
 
-    def intersect(self, x: ContentBound):
+    def intersect(self, x: ContentBound | None) -> ContentBound | None:
+        if x is None:
+            return None
         lower = max(self.lower, x.lower)
         upper = min(self.upper, x.upper)
 
