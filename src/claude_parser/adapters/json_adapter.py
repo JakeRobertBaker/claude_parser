@@ -1,6 +1,6 @@
 from __future__ import annotations
-from content import Content
-from tree import Node, TreeDict, NodeType
+from claude_parser.content import Content
+from claude_parser.tree import Node, TreeDict, NodeType
 
 
 def content_from_dict(content_dict: dict) -> Content:

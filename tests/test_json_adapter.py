@@ -1,9 +1,9 @@
 import json
 import pytest
 from pathlib import Path
-from content import Content
-from tree import NodeType, TreeDict
-from adapters.json_adapter import tree_from_dict, node_from_dict
+from claude_parser.content import Content
+from claude_parser.tree import NodeType, TreeDict
+from claude_parser.adapters.json_adapter import tree_from_dict, node_from_dict
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

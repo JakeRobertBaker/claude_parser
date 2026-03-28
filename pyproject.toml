@@ -6,6 +6,13 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = []
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/claude_parser"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
@@ -13,4 +20,3 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]

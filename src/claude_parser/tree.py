@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections.abc import Mapping
 from enum import Enum
-from content import Content, ContentBound
+from claude_parser.content import Content, ContentBound
 
 
 class NodeType(Enum):

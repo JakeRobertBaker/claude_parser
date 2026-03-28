@@ -1,5 +1,5 @@
 import pytest
-from content import Content, ContentPartition
+from claude_parser.content import Content, ContentPartition
 
 
 def make_content(chunk: int, first: int, last: int) -> Content:

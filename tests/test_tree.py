@@ -1,6 +1,6 @@
 import pytest
-from content import Content
-from tree import Node, NodeType, TreeDict
+from claude_parser.content import Content
+from claude_parser.tree import Node, NodeType, TreeDict
 
 
 def make_tree_dict() -> TreeDict:
