@@ -172,7 +172,6 @@ class TestMaxAncestorContent:
         parent = make_node(
             "parent", td, content_list=[make_content(0, 1, 50)], children=[child]
         )
-        child._assign_parent(parent)
         result = child.max_ancestor_content()
         assert result == make_content(0, 51, 100)
 
@@ -183,8 +182,6 @@ class TestMaxAncestorContent:
         parent = make_node(
             "parent", td, content_list=[make_content(0, 1, 100)], children=[child]
         )
-        child._assign_parent(parent)
-        grandchild._assign_parent(child)
         result = grandchild.max_ancestor_content()
         assert result == make_content(0, 51, 60)
 
@@ -263,27 +260,22 @@ class TestTreeDictValidate:
         parent = make_node(
             "parent", td, content_list=[make_content(0, 1, 50)], children=[child]
         )
-        child._assign_parent(parent)
         td.set_root(parent)
         td.validate()  # should not raise
 
     def test_ordering_violation_raises(self):
         td = make_tree_dict()
-        # child content is BEFORE parent content — violation
+        # child content is BEFORE parent content — violation at construction
         child = make_node("child", td, content_list=[make_content(0, 1, 40)])
-        parent = make_node(
-            "parent", td, content_list=[make_content(0, 50, 100)], children=[child]
-        )
-        child._assign_parent(parent)
-        td.set_root(parent)
         with pytest.raises(ValueError):
-            td.validate()
+            make_node(
+                "parent", td, content_list=[make_content(0, 50, 100)], children=[child]
+            )
 
     def test_no_content_skips_check(self):
         td = make_tree_dict()
         child = make_node("child", td, content_list=[make_content(0, 1, 10)])
         parent = make_node("parent", td, children=[child])
-        child._assign_parent(parent)
         td.set_root(parent)
         td.validate()  # parent has no content — no bound to check against
 
@@ -296,20 +288,14 @@ class TestTreeDictValidate:
         s2 = make_node(
             "s2", td, content_list=[make_content(0, 5, 6), make_content(0, 15, 16)]
         )
-        parent = make_node("parent", td, children=[s1, s2])
-        s1._assign_parent(parent)
-        s2._assign_parent(parent)
-        td.set_root(parent)
         with pytest.raises(ValueError):
-            td.validate()
+            make_node("parent", td, children=[s1, s2])
 
     def test_valid_siblings_pass(self):
         td = make_tree_dict()
         s1 = make_node("s1", td, content_list=[make_content(0, 1, 10)])
         s2 = make_node("s2", td, content_list=[make_content(0, 11, 20)])
         parent = make_node("parent", td, children=[s1, s2])
-        s1._assign_parent(parent)
-        s2._assign_parent(parent)
         td.set_root(parent)
         td.validate()  # should not raise
 

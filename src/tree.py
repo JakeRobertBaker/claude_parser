@@ -109,7 +109,7 @@ class Node:
     ):
         self.id = id
         self.title = title
-        self.children = children
+        self.children = []
         self.content_list = content_list or []
         self.node_type = node_type
         self.theory = theory
@@ -121,6 +121,11 @@ class Node:
             self._assign_parent(parent)
 
         self._node_dict.register(self)
+
+        for child in children:
+            self._validate_child(child)
+            self.children.append(child)
+            child._assign_parent(self)
 
     def max_ancestor_content(self) -> Content | None:
         """
@@ -206,31 +211,54 @@ class Node:
         """
         Add a child to an existing tree node, with local ordering validation.
         """
-        # Rule 1: child content must come after ancestor content bound
+        self._validate_child(child)
+        self.children.append(child)
+        child._assign_parent(self)
+
+    def _validate_child(self, child: Node) -> None:
+        """
+        Check rule 1 (child content after ancestor content) and
+        rule 2 (child does not interleave with existing siblings).
+        """
+        # Rule 1
         upper_bound = self.max_ancestor_content()
         if upper_bound and not child.is_after_content(upper_bound):
             raise ValueError(
                 f"Cannot add child '{child.id}': its content does not follow '{self.id}'."
             )
-        # Rule 2: child must not interleave with any existing sibling
-        self._rule_2_check(child)  # in progress
-        self.children.append(child)
-        child._assign_parent(self)
+        # Rule 2
 
-    def _rule_2_check(self, child: Node) -> None:
-        new_content_bound = child.content_bound()
-        # Compare new content span to neighbours.
-        # We have already assumed that the neighbours have disjoint spans.
-        # Therefore only need to check that new content span is disjoint to it's neighbours
+        self._validate_rule_2(child)
+
+    def _validate_rule_2(self, child: Node):
+        """
+        Rule 2: All Node's content span are disjoint to their siblings.
+        """
+
+        content_bound = child.content_bound()
+        if not content_bound:
+            return
+
+        content_bound_changed = True
         parent = self
+
         for sibling in parent.children:
             sibling_content_bound = sibling.content_bound()
             if sibling_content_bound and sibling_content_bound.intersect(
-                new_content_bound
+                content_bound
             ):
                 raise ValueError(
                     f"Cannot add child '{child.id}': content interleaves with sibling '{sibling.id}'."
                 )
+
+        # passed all the siblings and have not found intersection
+        # with the addition of this new Node the parent's content span may have grown. 
+        # If that has grown we need to validate.
+        new_content_bound = content_bound.union(parent.content_bound())
+        # if parent content bound grown
+        if new_contnet_bound != content_bound:
+        # can we make this reccursive validate(parent's new content bound, parent's sibling content bounds)
+
 
     def _assign_parent(self, parent: Node) -> None:
         if self.parent is not None:
