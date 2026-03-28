@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections.abc import Mapping
 from enum import Enum
-from content import Content
+from content import Content, ContentBound
 
 
 class NodeType(Enum):
@@ -47,7 +47,7 @@ class TreeDict(Mapping):
         """
         for node in self._data.values():
             # Rule 1
-            upper_bound = node.max_self_parent_content()
+            upper_bound = node.max_ancestor_content()
             if upper_bound:
                 for child in node.children:
                     if not child.is_after_content(upper_bound):
@@ -112,13 +112,13 @@ class Node:
 
         self._node_dict.register(self)
 
-    def max_self_parent_content(self) -> Content | None:
+    def max_ancestor_content(self) -> Content | None:
         """
         Get the maximum of this Node's content and its ancestors.
         """
         candidates = self.content_list.copy()
         if isinstance(self.parent, Node):
-            parent_max = self.parent.max_self_parent_content()
+            parent_max = self.parent.max_ancestor_content()
             if parent_max:
                 candidates.append(parent_max)
         return max(candidates) if candidates else None
@@ -164,7 +164,7 @@ class Node:
         return resolved
 
     def _content_extrema_max(self) -> Content | None:
-        """Get the max Content of this Node's and all of its children's content."""
+        """Get the max Content of this Node's and all of its descendant's content."""
         candidates = self.content_list + [
             child._content_extrema_max() for child in self.children
         ]
@@ -172,37 +172,61 @@ class Node:
         return max(candidates) if candidates else None
 
     def _content_extrema_min(self) -> Content | None:
-        """Get the min Content of this Node's and all of its children's content."""
+        """Get the min Content of this Node's and all of its descendants's content."""
         candidates = self.content_list + [
             child._content_extrema_min() for child in self.children
         ]
         candidates = [x for x in candidates if x]
         return min(candidates) if candidates else None
 
-    def content_bounds(self) -> tuple[Content | None, Content | None]:
+    def content_span(self) -> tuple[Content | None, Content | None]:
         """
         Get the upper and lower content bounds of the Node's span.
         """
         return self._content_extrema_min(), self._content_extrema_max()
+
+    def content_bound(self) -> ContentBound | None:
+        """
+        Get the upper and lower content bounds of the Node's span.
+        """
+
+        lower = self._content_extrema_min()
+        upper = self._content_extrema_max()
+
+        if lower and upper:
+            return ContentBound(lower, upper)
+        else:
+            return None
 
     def add_child(self, child: Node) -> None:
         """
         Add a child to an existing tree node, with local ordering validation.
         """
         # Rule 1: child content must come after ancestor content bound
-        upper_bound = self.max_self_parent_content()
+        upper_bound = self.max_ancestor_content()
         if upper_bound and not child.is_after_content(upper_bound):
             raise ValueError(
                 f"Cannot add child '{child.id}': its content does not follow '{self.id}'."
             )
         # Rule 2: child must not interleave with any existing sibling
-        for sibling in self.children:
-            if not (child.is_after(sibling) or sibling.is_after(child)):
-                raise ValueError(
-                    f"Cannot add child '{child.id}': content interleaves with sibling '{sibling.id}'."
-                )
+        self._rule_2_check(child)  # in progress
         self.children.append(child)
         child._assign_parent(self)
+
+    def _rule_2_check(self, child: Node):
+        content_span_new = True
+        parent = self
+        new_content_bound = child.content_bound()
+        # Compare new content span to neighbours.
+        # We have already assumed that the neighbours have disjoint spans.
+        # Therefore only need to check that new content span is disjoint to it's neighbours
+        for sibling in parent.children:
+            sibling_content_bound = sibling.content_bound()
+            if isinstance(sibling_content_bound, ContentBound):
+                if sibling_content_bound.intersect(new_content_bound):
+                    raise ValueError(
+                        f"Cannot add child '{child.id}': content interleaves with sibling '{sibling.id}'."
+                    )
 
     def _assign_parent(self, parent: Node) -> None:
         if self.parent is not None:

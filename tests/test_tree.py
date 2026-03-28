@@ -56,22 +56,24 @@ class TestContentBounds:
     def test_bounds_single_node(self):
         td = make_tree_dict()
         n = make_node("n1", td, content_list=[make_content(0, 5, 20)])
-        lo, hi = n.content_bounds()
+        lo, hi = n.content_span()
         assert lo == make_content(0, 5, 20)
         assert hi == make_content(0, 5, 20)
 
     def test_bounds_no_content(self):
         td = make_tree_dict()
         n = make_node("n1", td)
-        lo, hi = n.content_bounds()
+        lo, hi = n.content_span()
         assert lo is None
         assert hi is None
 
     def test_bounds_includes_children(self):
         td = make_tree_dict()
         child = make_node("child", td, content_list=[make_content(0, 51, 100)])
-        parent = make_node("parent", td, content_list=[make_content(0, 1, 50)], children=[child])
-        lo, hi = parent.content_bounds()
+        parent = make_node(
+            "parent", td, content_list=[make_content(0, 1, 50)], children=[child]
+        )
+        lo, hi = parent.content_span()
         assert lo == make_content(0, 1, 50)
         assert hi == make_content(0, 51, 100)
 
@@ -79,7 +81,7 @@ class TestContentBounds:
         td = make_tree_dict()
         child = make_node("child", td, content_list=[make_content(0, 10, 20)])
         parent = make_node("parent", td, children=[child])
-        lo, hi = parent.content_bounds()
+        lo, hi = parent.content_span()
         assert lo == make_content(0, 10, 20)
         assert hi == make_content(0, 10, 20)
 
@@ -166,7 +168,9 @@ class TestMaxSelfParentContent:
     def test_traverses_ancestors(self):
         td = make_tree_dict()
         child = make_node("child", td, content_list=[make_content(0, 51, 100)])
-        parent = make_node("parent", td, content_list=[make_content(0, 1, 50)], children=[child])
+        parent = make_node(
+            "parent", td, content_list=[make_content(0, 1, 50)], children=[child]
+        )
         child._assign_parent(parent)
         # child's max_self_parent_content should include parent's max (chunk 0, line 1)
         # but parent max is line 1 which is less than child's own line 51
@@ -177,7 +181,9 @@ class TestMaxSelfParentContent:
         td = make_tree_dict()
         grandchild = make_node("gc", td, content_list=[make_content(0, 51, 60)])
         child = make_node("child", td, children=[grandchild])
-        parent = make_node("parent", td, content_list=[make_content(0, 1, 100)], children=[child])
+        parent = make_node(
+            "parent", td, content_list=[make_content(0, 1, 100)], children=[child]
+        )
         child._assign_parent(parent)
         grandchild._assign_parent(child)
         # grandchild has no own content > parent's max, parent max is line 1
@@ -213,8 +219,12 @@ class TestAddChild:
         # s1 span: min=1, max=10; s2 span: min=5, max=15 — interleave
         td = make_tree_dict()
         parent = make_node("parent", td)
-        s1 = make_node("s1", td, content_list=[make_content(0, 1, 2), make_content(0, 10, 11)])
-        s2 = make_node("s2", td, content_list=[make_content(0, 5, 6), make_content(0, 15, 16)])
+        s1 = make_node(
+            "s1", td, content_list=[make_content(0, 1, 2), make_content(0, 10, 11)]
+        )
+        s2 = make_node(
+            "s2", td, content_list=[make_content(0, 5, 6), make_content(0, 15, 16)]
+        )
         parent.add_child(s1)
         with pytest.raises(ValueError):
             parent.add_child(s2)
@@ -253,7 +263,9 @@ class TestTreeDictValidate:
     def test_valid_tree_passes(self):
         td = make_tree_dict()
         child = make_node("child", td, content_list=[make_content(0, 51, 100)])
-        parent = make_node("parent", td, content_list=[make_content(0, 1, 50)], children=[child])
+        parent = make_node(
+            "parent", td, content_list=[make_content(0, 1, 50)], children=[child]
+        )
         child._assign_parent(parent)
         td.set_root(parent)
         td.validate()  # should not raise
@@ -262,7 +274,9 @@ class TestTreeDictValidate:
         td = make_tree_dict()
         # child content is BEFORE parent content — violation
         child = make_node("child", td, content_list=[make_content(0, 1, 40)])
-        parent = make_node("parent", td, content_list=[make_content(0, 50, 100)], children=[child])
+        parent = make_node(
+            "parent", td, content_list=[make_content(0, 50, 100)], children=[child]
+        )
         child._assign_parent(parent)
         td.set_root(parent)
         with pytest.raises(ValueError):
@@ -279,8 +293,12 @@ class TestTreeDictValidate:
     def test_sibling_ordering_violation_raises(self):
         # s1 span: min=1, max=10; s2 span: min=5, max=15 — interleave
         td = make_tree_dict()
-        s1 = make_node("s1", td, content_list=[make_content(0, 1, 2), make_content(0, 10, 11)])
-        s2 = make_node("s2", td, content_list=[make_content(0, 5, 6), make_content(0, 15, 16)])
+        s1 = make_node(
+            "s1", td, content_list=[make_content(0, 1, 2), make_content(0, 10, 11)]
+        )
+        s2 = make_node(
+            "s2", td, content_list=[make_content(0, 5, 6), make_content(0, 15, 16)]
+        )
         parent = make_node("parent", td, children=[s1, s2])
         s1._assign_parent(parent)
         s2._assign_parent(parent)
@@ -320,18 +338,28 @@ class TestDependencies:
         td = make_tree_dict()
         dep = make_node("dep", td, theory=True, node_type=NodeType.DEF)
         n = Node(
-            id="n", title="n", children=[], content_list=[],
-            node_type=NodeType.GENERIC, theory=False,
-            node_dict=td, dependency_ids=["dep"],
+            id="n",
+            title="n",
+            children=[],
+            content_list=[],
+            node_type=NodeType.GENERIC,
+            theory=False,
+            node_dict=td,
+            dependency_ids=["dep"],
         )
         assert n.dependencies == [dep]
 
     def test_missing_dependency_raises(self):
         td = make_tree_dict()
         n = Node(
-            id="n", title="n", children=[], content_list=[],
-            node_type=NodeType.GENERIC, theory=False,
-            node_dict=td, dependency_ids=["missing"],
+            id="n",
+            title="n",
+            children=[],
+            content_list=[],
+            node_type=NodeType.GENERIC,
+            theory=False,
+            node_dict=td,
+            dependency_ids=["missing"],
         )
         with pytest.raises(KeyError):
             _ = n.dependencies

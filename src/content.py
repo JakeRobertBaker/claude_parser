@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import bisect
 from collections import defaultdict
 
@@ -58,5 +59,23 @@ class Content:
             self.first_line == other.first_line
         )
 
+    def __le__(self, other: Content) -> bool:
+        return self == other or self < other
+
     def __bool__(self) -> bool:
         return True
+
+
+@dataclass
+class ContentBound:
+    lower: Content
+    upper: Content
+
+    def union(self, x: ContentBound):
+        return ContentBound(min(self.lower, x.lower), max(self.lower, x.upper))
+
+    def intersect(self, x: ContentBound):
+        lower = max(self.lower, x.lower)
+        upper = min(self.upper, x.upper)
+
+        return ContentBound(lower, upper) if lower <= upper else None
