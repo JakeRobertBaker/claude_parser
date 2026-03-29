@@ -10,7 +10,7 @@ from claude_parser.adapters.chunk_lines.json_adapter import (
 from claude_parser.adapters.filesystem_store import FilesystemStore
 from claude_parser.application.merge import (
     build_dependency_report,
-    check_duplicate_ids,
+    check_intra_duplicates,
     merge_chunk,
     validate_metadata,
 )
@@ -104,7 +104,6 @@ class ParsingService:
         )
 
     def _run_main_loop(self) -> None:
-        raw_path = os.path.abspath(self.config.raw_path)
         raw_lines = self._read_raw_lines()
 
         progress = self.store.load_progress()
@@ -150,15 +149,17 @@ class ParsingService:
 
             if self.config.dry_run:
                 tree_json = json.dumps(tree_to_dict(root), indent=2)
+                window_path = self._write_window(raw_lines, start, end)
                 prompt = build_section_prompt(
-                    raw_path, start, end, chunk_id_str,
-                    overlap_text, tree_json, self.config,
+                    window_path, start, end, chunk_id_str,
+                    overlap_text, tree_json, self.store.chunks_dir,
+                    self.config,
                 )
                 logger.info("DRY RUN — Section prompt:\n%s", prompt[:500])
                 break
 
             metadata = self._process_section(
-                raw_path, start, end, chunk_id_str,
+                raw_lines, start, end, chunk_id_str,
                 overlap_text, root, tree_dict,
             )
 
@@ -200,9 +201,16 @@ class ParsingService:
 
         logger.info("Main loop complete.")
 
+    def _write_window(self, raw_lines: list[str], start: int, end: int) -> str:
+        """Extract lines start..end from raw and write to current_window.md."""
+        window_path = os.path.join(self.store.state_dir, "current_window.md")
+        with open(window_path, "w", encoding="utf-8") as f:
+            f.writelines(raw_lines[start:end])
+        return window_path
+
     def _process_section(
         self,
-        raw_path: str,
+        raw_lines: list[str],
         start: int,
         end: int,
         chunk_id: str,
@@ -210,20 +218,19 @@ class ParsingService:
         root: Node,
         tree_dict: TreeDict,
     ) -> dict | None:
+        window_path = self._write_window(raw_lines, start, end)
         tree_json = json.dumps(tree_to_dict(root), indent=2)
         prompt = build_section_prompt(
-            raw_path, start, end, chunk_id,
-            overlap_text, tree_json, self.config,
+            window_path, start, end, chunk_id,
+            overlap_text, tree_json, self.store.chunks_dir,
+            self.config,
         )
-
-        # Replace placeholder with actual chunks dir
-        prompt = prompt.replace("{state_chunks_dir}", self.store.chunks_dir)
 
         result = self.llm.invoke(
             prompt=prompt,
             model=self.config.task_model,
             allowed_tools=self.config.allowed_tools.split(","),
-            add_dirs=[os.path.dirname(raw_path), self.store.state_dir],
+            add_dirs=[self.store.state_dir],
             timeout=self.config.timeout,
         )
 
@@ -249,18 +256,18 @@ class ParsingService:
             self._save_failure(chunk_id, result.stdout)
             return None
 
-        # Check for duplicate IDs — retry once with correction
-        duplicates = check_duplicate_ids(tree_dict, metadata)
+        # Check for duplicate IDs within the output — retry once with correction
+        duplicates = check_intra_duplicates(metadata)
         if duplicates:
             logger.warning(
-                "Duplicate IDs %s for %s, retrying...", duplicates, chunk_id,
+                "Intra-duplicate IDs %s for %s, retrying...", duplicates, chunk_id,
             )
             retry_prompt = build_retry_prompt(prompt, duplicates)
             result = self.llm.invoke(
                 prompt=retry_prompt,
                 model=self.config.task_model,
                 allowed_tools=self.config.allowed_tools.split(","),
-                add_dirs=[os.path.dirname(raw_path), self.store.state_dir],
+                add_dirs=[self.store.state_dir],
                 timeout=self.config.timeout,
             )
 
@@ -278,7 +285,7 @@ class ParsingService:
                 logger.error("Retry: invalid metadata for %s: %s", chunk_id, error)
                 return None
 
-            still_dupes = check_duplicate_ids(tree_dict, metadata)
+            still_dupes = check_intra_duplicates(metadata)
             if still_dupes:
                 logger.error(
                     "Retry still has duplicate IDs %s for %s", still_dupes, chunk_id,

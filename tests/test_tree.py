@@ -209,6 +209,25 @@ class TestAddChild:
         parent.add_child(child)
         assert child in parent.children
 
+    def test_add_contentless_child_to_node_with_content(self):
+        """Contentless structural child allowed on a node with content."""
+        td = make_tree_dict()
+        parent = make_node("parent", td, content_list=[make_content(0, 1, 50)])
+        child = make_node("child", td)
+        parent.add_child(child)
+        assert child in parent.children
+        assert child.parent is parent
+
+    def test_add_contentless_grandchild_under_ancestor_with_content(self):
+        """Contentless node added as grandchild where grandparent has content."""
+        td = make_tree_dict()
+        grandparent = make_node("gp", td, content_list=[make_content(0, 1, 50)])
+        parent = make_node("parent", td, content_list=[make_content(0, 51, 100)])
+        grandparent.add_child(parent)
+        empty = make_node("empty", td)
+        parent.add_child(empty)
+        assert empty in parent.children
+
     def test_add_child_sibling_interleaving_raises(self):
         # s1 span: min=1, max=10; s2 span: min=5, max=15 — interleave
         td = make_tree_dict()

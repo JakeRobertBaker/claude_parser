@@ -53,33 +53,36 @@ def build_phase0_prompt(raw_path: str, config: ParserConfig) -> str:
 
 
 def build_section_prompt(
-    raw_path: str,
-    start_line: int,
-    end_line: int,
+    window_path: str,
+    raw_start_line: int,
+    raw_end_line: int,
     chunk_id: str,
     overlap_text: str,
     tree_state_json: str,
+    chunks_dir: str,
     config: ParserConfig,
 ) -> str:
     skill_path = _resolve_skill_path()
-    min_lines = int((end_line - start_line) * 0.6)
+    window_lines = raw_end_line - raw_start_line
+    min_lines = int(window_lines * 0.6)
 
     parts = [
         "You are a task agent in a textbook markdown cleaning pipeline.",
         "",
         "## Instructions",
         f"1. Read your skill instructions from: {skill_path}",
-        f"2. Read lines {start_line + 1} through {end_line} from: {raw_path}",
-        f"   (Use the Read tool with offset={start_line} and limit={end_line - start_line})",
+        f"2. Read the window file: {window_path}",
+        "   This file contains the raw lines to process.",
         "3. Clean the text per the skill instructions",
-        f"4. Write the cleaned chunk to: {{state_chunks_dir}}/{chunk_id}.md",
+        f"4. Write the cleaned chunk to: {chunks_dir}/{chunk_id}.md",
         "5. Print ONLY the metadata JSON to stdout (no other text)",
         "",
         "## Parameters",
         f"- Chunk ID: {chunk_id}",
-        f"- Source file: {raw_path}",
-        f"- Line range: {start_line + 1} to {end_line} (1-indexed)",
-        f"- Minimum processing: {min_lines} lines (60% of stride)",
+        f"- Window file: {window_path}",
+        f"- Raw file line range: {raw_start_line + 1} to {raw_end_line} (1-indexed)",
+        f"- Minimum processing: {min_lines} lines (60% of window)",
+        f"- Report cutoff_line in raw file line numbers (between {raw_start_line + 1} and {raw_end_line})",
         "",
         "## Current Tree State",
         "Use this to assign correct node IDs and parent placement:",
@@ -102,8 +105,8 @@ def build_retry_prompt(original_prompt: str, duplicate_ids: list[str]) -> str:
     ids_str = ", ".join(f"'{i}'" for i in duplicate_ids)
     suffix = (
         f"\n\n## IMPORTANT CORRECTION\n"
-        f"The following node IDs are already taken: {ids_str}.\n"
-        f"You MUST choose different, unique IDs for these nodes."
+        f"The following node IDs appear more than once in your output: {ids_str}.\n"
+        f"Each node ID must be unique. Deduplicate these IDs."
     )
     return original_prompt + suffix
 

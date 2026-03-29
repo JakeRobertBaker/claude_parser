@@ -17,35 +17,33 @@ def validate_metadata(meta: dict[str, Any]) -> str | None:
         return "missing 'chunk_id'"
     if "cutoff_line" not in meta:
         return "missing 'cutoff_line'"
-    if "section_node_id" not in meta:
-        return "missing 'section_node_id'"
-    if "new_nodes" not in meta:
-        return "missing 'new_nodes'"
-    if not isinstance(meta["new_nodes"], list):
-        return "'new_nodes' must be a list"
+    if "nodes" not in meta:
+        return "missing 'nodes'"
+    if not isinstance(meta["nodes"], list):
+        return "'nodes' must be a list"
 
-    for i, raw_node in enumerate(meta["new_nodes"]):
+    for i, raw_node in enumerate(meta["nodes"]):
         node_data = cast(dict[str, Any], raw_node)
         if "id" not in node_data:
-            return f"new_nodes[{i}] missing 'id'"
+            return f"nodes[{i}] missing 'id'"
         if "title" not in node_data:
-            return f"new_nodes[{i}] missing 'title'"
-        if "parent_id" not in node_data:
-            return f"new_nodes[{i}] missing 'parent_id'"
+            return f"nodes[{i}] missing 'title'"
         node_type = node_data.get("node_type", "generic")
         if node_type not in VALID_NODE_TYPES:
-            return f"new_nodes[{i}] invalid node_type '{node_type}'"
+            return f"nodes[{i}] invalid node_type '{node_type}'"
 
     return None
 
 
-def check_duplicate_ids(tree_dict: TreeDict, metadata: dict) -> list[str]:
-    """Return list of IDs in metadata that already exist in tree_dict."""
-    duplicates = []
-    for node_data in metadata.get("new_nodes", []):
+def check_intra_duplicates(metadata: dict) -> list[str]:
+    """Return IDs that appear more than once in the output's nodes list."""
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for node_data in metadata.get("nodes", []):
         node_id = node_data["id"]
-        if node_id in tree_dict._data:
+        if node_id in seen:
             duplicates.append(node_id)
+        seen.add(node_id)
     return duplicates
 
 
@@ -57,55 +55,59 @@ def merge_chunk(
 ) -> None:
     """Apply Haiku's metadata to the domain tree.
 
-    1. Add section_content to the existing section node.
-    2. Create new child nodes from new_nodes.
+    Iterates the flat nodes list in order:
+    - Existing ID -> add content to existing node
+    - New ID -> create new node as child of parent_id
     """
-    section_node_id = metadata["section_node_id"]
-    section_node = tree_dict[section_node_id]
+    for node_data in metadata["nodes"]:
+        node_id = node_data["id"]
 
-    # Add section content to existing node
-    for content_data in metadata.get("section_content", []):
-        content = Content(
-            chunk_number=chunk_number,
-            first_line=content_data["first_line"],
-            last_line=content_data["last_line"],
-        )
-        section_node.add_content(content)
-        logger.debug(
-            "Added content (chunk %d, lines %d-%d) to node '%s'",
-            chunk_number, content_data["first_line"],
-            content_data["last_line"], section_node_id,
-        )
+        if node_id in tree_dict._data:
+            existing = tree_dict[node_id]
+            for content_data in node_data.get("content", []):
+                content = Content(
+                    chunk_number=chunk_number,
+                    first_line=content_data["first_line"],
+                    last_line=content_data["last_line"],
+                )
+                existing.add_content(content)
+                logger.debug(
+                    "Added content (chunk %d, lines %d-%d) to existing node '%s'",
+                    chunk_number, content_data["first_line"],
+                    content_data["last_line"], node_id,
+                )
+        else:
+            parent_id = node_data.get("parent_id")
+            if not parent_id:
+                raise ValueError(
+                    f"New node '{node_id}' missing required 'parent_id'"
+                )
+            parent_node = tree_dict[parent_id]
 
-    # Create new child nodes
-    for node_data in metadata.get("new_nodes", []):
-        parent_id = node_data["parent_id"]
-        parent_node = tree_dict[parent_id]
+            node_type = NodeType(node_data.get("node_type", "generic"))
+            is_theory = node_type != NodeType.GENERIC
 
-        node_type = NodeType(node_data.get("node_type", "generic"))
-        is_theory = node_type != NodeType.GENERIC
+            content_list = [
+                Content(
+                    chunk_number=chunk_number,
+                    first_line=c["first_line"],
+                    last_line=c["last_line"],
+                )
+                for c in node_data.get("content", [])
+            ]
 
-        content_list = [
-            Content(
-                chunk_number=chunk_number,
-                first_line=c["first_line"],
-                last_line=c["last_line"],
+            new_node = Node(
+                id=node_data["id"],
+                title=node_data["title"],
+                children=[],
+                content_list=content_list,
+                node_type=node_type,
+                theory=is_theory,
+                node_dict=tree_dict,
+                dependency_ids=node_data.get("dependencies", []),
             )
-            for c in node_data.get("content", [])
-        ]
-
-        new_node = Node(
-            id=node_data["id"],
-            title=node_data["title"],
-            children=[],
-            content_list=content_list,
-            node_type=node_type,
-            theory=is_theory,
-            node_dict=tree_dict,
-            dependency_ids=node_data.get("dependencies", []),
-        )
-        parent_node.add_child(new_node)
-        logger.info("Created node '%s' under '%s'", node_data["id"], parent_id)
+            parent_node.add_child(new_node)
+            logger.info("Created node '%s' under '%s'", node_data["id"], parent_id)
 
 
 def build_dependency_report(tree_dict: TreeDict) -> dict:

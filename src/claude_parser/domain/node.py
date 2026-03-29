@@ -224,7 +224,7 @@ class Node:
         """
         # Rule 1
         upper_bound = self.max_ancestor_content()
-        if upper_bound and not child.is_after_content(upper_bound):
+        if upper_bound and child.content_bound() and not child.is_after_content(upper_bound):
             raise ValueError(
                 f"Cannot add child '{child.id}': its content does not follow '{self.id}'."
             )
