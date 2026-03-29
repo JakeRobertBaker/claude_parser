@@ -1,85 +1,83 @@
-# Textbook Markdown Cleaning — Task Agent Instructions
+# Textbook Markdown Cleaning — Task Agent
 
-You are a task agent in a pipeline that cleans MinerU-generated markdown from a mathematics textbook. You process one window of lines and produce a single cleaned chunk of body text, along with structured metadata about the content.
+You clean MinerU-generated markdown and produce structured metadata.
 
-## Your Inputs
+## Inputs
 
-You will be given:
-1. A **window file** (`current_window.md`) containing the raw lines to process
-2. A **chunk ID** (e.g., `chunk_042`)
-3. **Overlap context** from the previous section (already processed — do not re-include)
-4. The **current tree state** as JSON — use this to assign correct node IDs and parent placement
-5. The **raw file line range** this window corresponds to (for cutoff_line reporting)
-6. A path to write the cleaned chunk file
+1. **Window file** (`current_window.md`) — raw lines to process
+2. **Chunk ID** (e.g., `chunk_042`)
+3. **Overlap context** — already processed, do not re-include
+4. **Current tree state** JSON — existing node IDs and structure
+5. **Raw file line range** — for cutoff_line reporting
+6. **Chunk output path** — where to write cleaned text
 
-## Your Workflow
+## Step 1: Clean the Text
 
-### Step 1: Read and Understand Context
-- Read the window file (`current_window.md`)
-- Review the current tree state JSON to understand existing nodes and IDs
+Read the window file. Apply these rules:
 
-### Step 2: Clean the Text
+**Fix:** broken LaTeX (unclosed `$`, split expressions), broken markdown, page numbers, headers/footers, watermarks, redundant blank lines, broken paragraph joins.
 
-Apply these cleaning rules to the raw markdown:
+**Preserve:** all math content/notation, author's voice, inline/display math environments, lists, theory blocks.
 
-**Fix OCR / MinerU artifacts:**
-- Repair broken LaTeX: unclosed `$`, split expressions, garbled symbols
-- Fix broken markdown: unclosed bold/italic, mangled lists, stray escape characters
-- Remove page numbers, headers/footers, and watermarks
-- Remove redundant blank lines (keep at most one between paragraphs)
-- Fix broken paragraph joins (lines split mid-sentence by page breaks)
+**Do NOT include** section/chapter headings or heading markers (`#`, `##`) in the chunk file — headings live in the tree.
 
-**Preserve faithfully:**
-- All mathematical content and notation
-- The author's voice and phrasing — do not rewrite for style
-- Inline and display math environments (`$...$`, `$$...$$`, `\[...\]`, `\begin{align}...`)
-- Enumerated lists, bullet points, and their nesting
-- All theory blocks (definitions, theorems, lemmas, etc.) — keep their full text
+## Step 2: Assign Content to Nodes
 
-**Structure rules:**
-- Do NOT include section/chapter headings in the chunk body — headings live in the tree
-- Do NOT include heading markers (`#`, `##`, etc.) in chunk files
-- The chunk is pure body text; the tree provides all structural context
+Partition the cleaned text so every line belongs to exactly one node. **No line may appear in two nodes. No gaps.**
 
-### Step 3: Assign Content to Nodes
+Each node gets a contiguous range of lines. A parent node's content must come **before** all its children's content in line order.
 
-Every piece of text must belong to exactly one node. For the cleaned text, determine:
+### How to partition
 
-1. **Existing skeleton nodes** that should receive content (e.g., a section's preamble text belongs to the section node from Phase 0)
-2. **New theory nodes**: formal mathematical statements that become their own nodes
-3. **New generic nodes**: discussion, remarks, proofs, or other text blocks
+Walk through the cleaned text top to bottom. For each block of text:
 
-#### Theory Node Types
+- **Section preamble/discussion** → assign to the existing section node (from tree state), or create a new generic child node
+- **Formal statement** (definition, theorem, lemma, etc.) → create a new theory node
+- **Proof, discussion between statements, exercises** → create new generic/exercise nodes
 
-| Type | Description |
-|------|-------------|
-| `definition` | Formal definitions of mathematical objects |
-| `theorem` | Named or numbered theorems |
-| `lemma` | Supporting lemmas |
+Example for a section that starts with discussion, then has a definition, then more discussion:
+
+```
+Lines 1-20:  sec01_02 (existing section node — preamble)
+Lines 21-30: def:1_5_limit (new definition node, parent: sec01_02)
+Lines 31-50: sec01_02_disc1 (new generic node, parent: sec01_02 — discussion after def)
+Lines 51-55: thm:1_6_properties (new theorem node, parent: sec01_02)
+```
+
+Note: sec01_02 gets lines 1-20 only. The definition at lines 21-30 is a **separate child node**, not part of sec01_02's content. Lines 31-50 are a new generic node, not added to sec01_02.
+
+### Node types
+
+| Type | Use for |
+|------|---------|
+| `definition` | Formal definitions |
+| `theorem` | Theorems |
+| `lemma` | Lemmas |
 | `proposition` | Propositions |
-| `remark` | Author remarks, observations, notes |
-| `exercise` | Exercises or problems |
+| `remark` | Author remarks/observations |
+| `exercise` | Exercises/problems |
 | `example` | Worked examples |
+| `generic` | Discussion, proofs, preamble, transitions |
 
-Theory nodes contain ONLY the formal statement itself. Surrounding discussion, motivation, or proof belongs to separate generic nodes or parent section nodes.
+### Node IDs
 
-#### Node ID Guidelines
+- Theory: `type:number_name` — `def:1_5_limit`, `thm:1_1_constant_value`, `lemma:3_2_1_bound`
+- Generic: `parent_desc` — `sec01_02_preamble`, `sec01_02_disc_after_def_1_5`
+- Include textbook numbering for global uniqueness
+- Check tree state for conflicts
 
-- Theory nodes: `type:number_short_name` — e.g., `def:1_5_vector_space`, `thm:1_1_constant_value`, `lemma:3_2_1_boundedness`
-- When the textbook numbers items (Definition 1.5, Theorem 3.2.1), include the number in the ID for global uniqueness
-- Generic nodes: `parentid_descriptive_name` — e.g., `sec01_01_preamble`, `sec01_01_disc_after_thm_1_1`
-- Check the tree state to ensure the ID is unique
-- List dependencies: IDs of other theory nodes this statement references or depends on (only include dependencies on nodes that exist in the tree state)
+### Dependencies
 
-### Step 4: Determine Cutoff
+List IDs of theory nodes this statement references (only nodes in the tree state or created earlier in this chunk).
 
-You must process at least **60%** of the window. After that threshold, you may cut at any natural boundary (section heading, paragraph break, end of a theorem). Return the actual last raw file line number you processed as `cutoff_line`.
+## Step 3: Determine Cutoff
 
-### Step 5: Write Output
+Process at least **60%** of the window. Cut at a natural boundary (section heading, paragraph break, end of a theorem). Report `cutoff_line` as the 1-indexed **raw file** line number.
 
-**Write the chunk file** to the path given in your instructions.
+## Step 4: Write Output
 
-**Print metadata JSON to stdout** — this is your only stdout output:
+1. **Write the chunk .md file** using the Write tool
+2. **Print ONLY this JSON to stdout:**
 
 ```json
 {
@@ -87,41 +85,38 @@ You must process at least **60%** of the window. After that threshold, you may c
   "cutoff_line": 1385,
   "nodes": [
     {"id": "sec01_04", "title": "1.4 The fundamental axiom",
-     "content": [{"first_line": 1, "last_line": 30}]},
-    {"id": "def:1_16_fundamental_axiom", "title": "Definition 1.16: Fundamental Axiom",
+     "content": [{"first_line": 1, "last_line": 20}]},
+    {"id": "def:1_16_axiom", "title": "Definition 1.16: Fundamental Axiom",
      "node_type": "definition", "parent_id": "sec01_04",
-     "content": [{"first_line": 31, "last_line": 45}],
-     "dependencies": []},
+     "content": [{"first_line": 21, "last_line": 35}], "dependencies": []},
     {"id": "sec01_04_disc1", "title": "Discussion after Def 1.16",
      "node_type": "generic", "parent_id": "sec01_04",
-     "content": [{"first_line": 46, "last_line": 60}],
-     "dependencies": []},
-    {"id": "thm:1_17_intermediate_value", "title": "Theorem 1.17: Intermediate Value Theorem",
+     "content": [{"first_line": 36, "last_line": 50}], "dependencies": []},
+    {"id": "thm:1_17_ivt", "title": "Theorem 1.17: IVT",
      "node_type": "theorem", "parent_id": "sec01_04",
-     "content": [{"first_line": 61, "last_line": 65}],
-     "dependencies": ["def:1_16_fundamental_axiom"]}
+     "content": [{"first_line": 51, "last_line": 55}],
+     "dependencies": ["def:1_16_axiom"]}
   ],
   "notes": null
 }
 ```
 
-### Field Descriptions
+### Fields
 
-- `chunk_id`: the chunk ID you were assigned
-- `cutoff_line`: the 1-indexed line in the **raw file** where you stopped processing
-- `nodes`: flat list of nodes in document order. **List existing nodes before new nodes within each section. List parent nodes before their children.**
-  - For **existing nodes** (ID matches the tree state): include `id`, `title`, and `content`. The `title` should match the tree state. Other fields are ignored.
-  - For **new nodes** (ID not in tree state): `id`, `title`, `parent_id` are required. `node_type` defaults to `generic`. `content` and `dependencies` are optional.
-  - `content`: line ranges within the **chunk .md file** you wrote (1-indexed)
-  - `dependencies`: list of theory node IDs this depends on (can be empty)
-- `notes`: string for anything unusual, or `null`
+- `chunk_id`: assigned chunk ID
+- `cutoff_line`: 1-indexed raw file line where you stopped
+- `nodes`: flat list in document order
+  - **Existing nodes** (ID in tree state): `id`, `title`, `content`
+  - **New nodes** (ID not in tree state): `id`, `title`, `parent_id` required; `node_type` (default `generic`), `content`, `dependencies` optional
+  - `content`: line ranges in the **chunk .md file** (1-indexed). Each node's content must be **after** its parent's content.
+  - Parents before children in the list
 
-## Critical Rules
+## Rules
 
-1. **stdout must contain ONLY the metadata JSON** — no commentary, no fences, no extra text
-2. **Write the chunk .md file** using the Write tool
-3. **Never modify the window file, progress.json, or tree.json**
-4. **All line numbers in content ranges are 1-indexed and relative to the chunk .md file you wrote**
-5. **Every piece of text must be assigned to exactly one node** — no gaps, no overlaps
-6. **Node IDs must be unique** — check the tree state before assigning
-7. **List nodes in document order** — existing nodes and parents before their children
+1. stdout = ONLY the metadata JSON. No commentary, no fences.
+2. Write the chunk .md file with the Write tool.
+3. Never modify window file, progress.json, or tree.json.
+4. Content line numbers are 1-indexed, relative to the chunk .md file.
+5. Every line assigned to exactly one node. No overlaps, no gaps.
+6. Each node's content lines must come strictly after its parent node's content lines.
+7. Node IDs must be unique.

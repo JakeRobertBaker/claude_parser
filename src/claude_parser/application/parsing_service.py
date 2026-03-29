@@ -175,7 +175,8 @@ class ParsingService:
                         f"section_{progress.section_index:03d}",
                         json.dumps(metadata, indent=2),
                     )
-                    progress.next_start_line = end
+                    cutoff = metadata.get("cutoff_line", end)
+                    progress.next_start_line = cutoff
                     progress.section_index += 1
                     self.store.save_progress(progress)
                     continue
