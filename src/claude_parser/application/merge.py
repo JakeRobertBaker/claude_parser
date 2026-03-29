@@ -55,7 +55,8 @@ def validate_chunk_file(
 ) -> str | None:
     """Validate that the chunk file matches the metadata.
 
-    Returns an error message, or None if valid.
+    Returns an error message only for severe problems. Logs warnings for
+    minor discrepancies (off-by-a-few line counts, low ratios).
     """
     import os
 
@@ -73,24 +74,33 @@ def validate_chunk_file(
             if last > max_last_line:
                 max_last_line = last
 
-    if max_last_line > actual_lines:
+    line_diff = max_last_line - actual_lines
+    if line_diff > 5:
         return (
             f"metadata claims content up to line {max_last_line} "
-            f"but chunk file only has {actual_lines} lines"
+            f"but chunk file only has {actual_lines} lines (off by {line_diff})"
+        )
+    if line_diff > 0:
+        logger.warning(
+            "Chunk file has %d lines but metadata claims %d (off by %d)",
+            actual_lines, max_last_line, line_diff,
         )
 
-    # Check cutoff vs content coverage — if cutoff covers N raw lines but
-    # the chunk has very few cleaned lines, content was likely skipped.
+    # Check cutoff vs content coverage — warn if very low
     cutoff = metadata.get("cutoff_line", raw_end)
     raw_lines_covered = cutoff - raw_start
     if raw_lines_covered > 0 and actual_lines > 0:
         ratio = actual_lines / raw_lines_covered
-        # Cleaning typically compresses by ~50-70%, but <20% is suspicious
         if ratio < 0.15:
             return (
                 f"chunk covers {raw_lines_covered} raw lines "
                 f"but only wrote {actual_lines} cleaned lines "
                 f"(ratio {ratio:.0%}) — content likely skipped"
+            )
+        if ratio < 0.30:
+            logger.warning(
+                "Low coverage ratio: %d cleaned lines for %d raw lines (%.0f%%)",
+                actual_lines, raw_lines_covered, ratio * 100,
             )
 
     return None
