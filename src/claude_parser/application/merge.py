@@ -47,6 +47,55 @@ def check_intra_duplicates(metadata: dict) -> list[str]:
     return duplicates
 
 
+def validate_chunk_file(
+    metadata: dict[str, Any],
+    chunk_path: str,
+    raw_start: int,
+    raw_end: int,
+) -> str | None:
+    """Validate that the chunk file matches the metadata.
+
+    Returns an error message, or None if valid.
+    """
+    import os
+
+    if not os.path.exists(chunk_path):
+        return f"chunk file not found: {chunk_path}"
+
+    with open(chunk_path, encoding="utf-8") as f:
+        actual_lines = sum(1 for _ in f)
+
+    # Find the max last_line claimed by metadata
+    max_last_line = 0
+    for node_data in metadata.get("nodes", []):
+        for content in node_data.get("content", []):
+            last = content.get("last_line", 0)
+            if last > max_last_line:
+                max_last_line = last
+
+    if max_last_line > actual_lines:
+        return (
+            f"metadata claims content up to line {max_last_line} "
+            f"but chunk file only has {actual_lines} lines"
+        )
+
+    # Check cutoff vs content coverage — if cutoff covers N raw lines but
+    # the chunk has very few cleaned lines, content was likely skipped.
+    cutoff = metadata.get("cutoff_line", raw_end)
+    raw_lines_covered = cutoff - raw_start
+    if raw_lines_covered > 0 and actual_lines > 0:
+        ratio = actual_lines / raw_lines_covered
+        # Cleaning typically compresses by ~50-70%, but <20% is suspicious
+        if ratio < 0.15:
+            return (
+                f"chunk covers {raw_lines_covered} raw lines "
+                f"but only wrote {actual_lines} cleaned lines "
+                f"(ratio {ratio:.0%}) — content likely skipped"
+            )
+
+    return None
+
+
 def merge_chunk(
     tree_dict: TreeDict,
     root: Node,

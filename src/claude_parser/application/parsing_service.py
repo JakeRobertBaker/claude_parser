@@ -12,6 +12,7 @@ from claude_parser.application.merge import (
     build_dependency_report,
     check_intra_duplicates,
     merge_chunk,
+    validate_chunk_file,
     validate_metadata,
 )
 from claude_parser.application.progress import ProgressState
@@ -26,6 +27,11 @@ from claude_parser.ports.llm import LLMPort
 from claude_parser.ports.vcs import VCSPort
 
 logger = logging.getLogger(__name__)
+
+# Phase 0 only prints JSON — no tool calls needed.
+_PHASE0_TOOLS: list[str] = []
+# Section processing needs Write to create the chunk .md file.
+_SECTION_TOOLS = ["Write"]
 
 
 class ParsingService:
@@ -60,8 +66,9 @@ class ParsingService:
 
     def _run_phase0(self) -> None:
         logger.info("Phase 0: Analyzing front matter...")
-        raw_path = os.path.abspath(self.config.raw_path)
-        prompt = build_phase0_prompt(raw_path, self.config)
+        raw_lines = self._read_raw_lines()
+        raw_content = "".join(raw_lines[:500])
+        prompt = build_phase0_prompt(raw_content, self.config)
 
         if self.config.dry_run:
             logger.info("DRY RUN — Phase 0 prompt:\n%s", prompt)
@@ -70,8 +77,8 @@ class ParsingService:
         result = self.llm.invoke(
             prompt=prompt,
             model=self.config.phase0_model,
-            allowed_tools=self.config.allowed_tools.split(","),
-            add_dirs=[os.path.dirname(raw_path)],
+            allowed_tools=_PHASE0_TOOLS,
+            add_dirs=[],
             timeout=self.config.timeout,
         )
 
@@ -84,24 +91,21 @@ class ParsingService:
             self._save_failure("phase0", result.stdout)
             raise RuntimeError("Phase 0: Could not parse JSON from output")
 
-        if "hierarchy" not in metadata or "content_start_line" not in metadata:
+        if "hierarchy" not in metadata:
             self._save_failure("phase0", result.stdout)
-            raise RuntimeError("Phase 0: Missing 'hierarchy' or 'content_start_line'")
+            raise RuntimeError("Phase 0: Missing 'hierarchy' in output")
 
         root, tree_dict = chunk_lines_tree_from_dict(metadata["hierarchy"])
 
         self.store.save(root)
         progress = ProgressState(
-            next_start_line=metadata["content_start_line"] - 1,  # 0-indexed
+            next_start_line=0,
             next_chunk_id=0,
             section_index=0,
         )
         self.store.save_progress(progress)
         self.vcs.commit_all("Phase 0: skeleton hierarchy")
-        logger.info(
-            "Phase 0 complete. Content starts at line %d. %d skeleton nodes.",
-            metadata["content_start_line"], len(tree_dict),
-        )
+        logger.info("Phase 0 complete. %d skeleton nodes.", len(tree_dict))
 
     def _run_main_loop(self) -> None:
         raw_lines = self._read_raw_lines()
@@ -149,10 +153,13 @@ class ParsingService:
 
             if self.config.dry_run:
                 tree_json = json.dumps(tree_to_dict(root), indent=2)
-                window_path = self._write_window(raw_lines, start, end)
+                window_content = "".join(raw_lines[start:end])
+                chunk_path = os.path.join(
+                    self.store.chunks_dir, f"{chunk_id_str}.md",
+                )
                 prompt = build_section_prompt(
-                    window_path, start, end, chunk_id_str,
-                    overlap_text, tree_json, self.store.chunks_dir,
+                    window_content, start, end, chunk_id_str,
+                    overlap_text, tree_json, chunk_path,
                     self.config,
                 )
                 logger.info("DRY RUN — Section prompt:\n%s", prompt[:500])
@@ -202,9 +209,11 @@ class ParsingService:
 
         logger.info("Main loop complete.")
 
-    def _write_window(self, raw_lines: list[str], start: int, end: int) -> str:
-        """Extract lines start..end from raw and write to current_window.md."""
-        window_path = os.path.join(self.store.state_dir, "current_window.md")
+    def _write_window(
+        self, raw_lines: list[str], start: int, end: int, chunk_id: str,
+    ) -> str:
+        """Write window to disk for debug logging (not used in the prompt)."""
+        window_path = os.path.join(self.store.state_dir, f"current_window_{chunk_id}.md")
         with open(window_path, "w", encoding="utf-8") as f:
             f.writelines(raw_lines[start:end])
         return window_path
@@ -219,18 +228,22 @@ class ParsingService:
         root: Node,
         tree_dict: TreeDict,
     ) -> dict | None:
-        window_path = self._write_window(raw_lines, start, end)
+        # Write window to disk for debugging
+        self._write_window(raw_lines, start, end, chunk_id)
+
+        window_content = "".join(raw_lines[start:end])
         tree_json = json.dumps(tree_to_dict(root), indent=2)
+        chunk_path = os.path.join(self.store.chunks_dir, f"{chunk_id}.md")
         prompt = build_section_prompt(
-            window_path, start, end, chunk_id,
-            overlap_text, tree_json, self.store.chunks_dir,
+            window_content, start, end, chunk_id,
+            overlap_text, tree_json, chunk_path,
             self.config,
         )
 
         result = self.llm.invoke(
             prompt=prompt,
             model=self.config.task_model,
-            allowed_tools=self.config.allowed_tools.split(","),
+            allowed_tools=_SECTION_TOOLS,
             add_dirs=[self.store.state_dir],
             timeout=self.config.timeout,
         )
@@ -267,7 +280,7 @@ class ParsingService:
             result = self.llm.invoke(
                 prompt=retry_prompt,
                 model=self.config.task_model,
-                allowed_tools=self.config.allowed_tools.split(","),
+                allowed_tools=_SECTION_TOOLS,
                 add_dirs=[self.store.state_dir],
                 timeout=self.config.timeout,
             )
@@ -293,7 +306,73 @@ class ParsingService:
                 )
                 return None
 
+        # Validate that chunk file matches metadata
+        chunk_error = validate_chunk_file(metadata, chunk_path, start + 1, end)
+        if chunk_error:
+            logger.error("Chunk validation failed for %s: %s", chunk_id, chunk_error)
+            self._save_failure(chunk_id, result.stdout)
+            return None
+
+        # Diagnostic logging
+        self._log_chunk_diagnostics(chunk_id, metadata, chunk_path, start, end)
+
         return metadata
+
+    def _log_chunk_diagnostics(
+        self,
+        chunk_id: str,
+        metadata: dict,
+        chunk_path: str,
+        start: int,
+        end: int,
+    ) -> None:
+        """Log diagnostic info about a processed chunk for debugging."""
+        cutoff = metadata.get("cutoff_line", end)
+        nodes = metadata.get("nodes", [])
+        node_count = len(nodes)
+
+        # Count actual lines in chunk file
+        try:
+            with open(chunk_path, encoding="utf-8") as f:
+                actual_lines = sum(1 for _ in f)
+        except FileNotFoundError:
+            actual_lines = 0
+
+        # Find content line range from metadata
+        min_line = float("inf")
+        max_line = 0
+        for node_data in nodes:
+            for content in node_data.get("content", []):
+                first = content.get("first_line", 0)
+                last = content.get("last_line", 0)
+                if first < min_line:
+                    min_line = first
+                if last > max_line:
+                    max_line = last
+
+        raw_covered = cutoff - (start + 1) + 1
+
+        logger.info(
+            "[%s] cutoff=%d, raw_covered=%d, chunk_lines=%d, "
+            "metadata_lines=%d-%d, nodes=%d",
+            chunk_id, cutoff, raw_covered, actual_lines,
+            min_line if min_line != float("inf") else 0,
+            max_line, node_count,
+        )
+
+        # Log per-node summary
+        for node_data in nodes:
+            node_id = node_data.get("id", "?")
+            content_ranges = [
+                f"{c['first_line']}-{c['last_line']}"
+                for c in node_data.get("content", [])
+            ]
+            logger.debug(
+                "[%s]   node=%s type=%s content=%s",
+                chunk_id, node_id,
+                node_data.get("node_type", "existing"),
+                ", ".join(content_ranges) if content_ranges else "none",
+            )
 
     def _read_raw_lines(self) -> list[str]:
         with open(self.config.raw_path, encoding="utf-8") as f:

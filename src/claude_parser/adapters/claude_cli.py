@@ -23,8 +23,9 @@ class ClaudeCLIAdapter:
             "--model", model,
             "--verbose",
             "--output-format", "stream-json",
-            "--allowedTools", ",".join(allowed_tools),
         ]
+        if allowed_tools:
+            cmd.extend(["--allowedTools", ",".join(allowed_tools)])
         for d in add_dirs:
             cmd.extend(["--add-dir", d])
 
