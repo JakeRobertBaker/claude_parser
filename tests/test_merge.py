@@ -1,5 +1,5 @@
 import pytest
-from claude_parser.adapters.chunk_lines.content import Content
+from claude_parser.domain.content import Content
 from claude_parser.application.merge import (
     build_dependency_report,
     check_intra_duplicates,

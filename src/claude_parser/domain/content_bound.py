@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from claude_parser.domain.ports import ContentBase
+from claude_parser.domain.protocols import ContentBase
 
 
 @dataclass

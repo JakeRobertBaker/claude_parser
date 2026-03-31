@@ -1,14 +1,31 @@
 from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
-from claude_parser.domain.ports import ContentBase
+from claude_parser.domain.protocols import ContentBase
+from claude_parser.domain.content import Content
 from claude_parser.domain.node import Node, TreeDict, NodeType
+
+
+def content_from_dict(content_dict: dict) -> Content:
+    return Content(
+        chunk_number=content_dict["chunk_number"],
+        first_line=content_dict["first_line"],
+        last_line=content_dict["last_line"],
+    )
+
+
+def content_to_dict(content: Content) -> dict:
+    return {
+        "chunk_number": content.chunk_number,
+        "first_line": content.first_line,
+        "last_line": content.last_line,
+    }
 
 
 def node_from_dict(
     node_dict: dict,
     node_registry: TreeDict,
-    content_deserializer: Callable[[dict], ContentBase],
+    content_deserializer: Callable[[dict], ContentBase] = content_from_dict,
 ) -> Node:
     children_dicts = node_dict.get("children", [])
     if not isinstance(children_dicts, list):
@@ -37,7 +54,7 @@ def node_from_dict(
 
 def node_to_dict(
     node: Node,
-    content_serializer: Callable[[Any], dict],
+    content_serializer: Callable[[Any], dict] = content_to_dict,
 ) -> dict:
     result: dict = {
         "id": node.id,
@@ -60,7 +77,7 @@ def node_to_dict(
 
 def tree_from_dict(
     data: dict,
-    content_deserializer: Callable[[dict], ContentBase],
+    content_deserializer: Callable[[dict], ContentBase] = content_from_dict,
 ) -> tuple[Node, TreeDict]:
     """
     Build a full tree from a nested dict. Returns (root_node, tree_dict).
@@ -74,6 +91,6 @@ def tree_from_dict(
 
 def tree_to_dict(
     root: Node,
-    content_serializer: Callable[[Any], dict],
+    content_serializer: Callable[[Any], dict] = content_to_dict,
 ) -> dict:
     return node_to_dict(root, content_serializer)

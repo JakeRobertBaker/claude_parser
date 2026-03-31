@@ -1,9 +1,9 @@
 import json
 import pytest
 from pathlib import Path
-from claude_parser.adapters.chunk_lines.content import Content
+from claude_parser.domain.content import Content
 from claude_parser.domain.node import NodeType, TreeDict
-from claude_parser.adapters.chunk_lines.json_adapter import tree_from_dict, node_from_dict
+from claude_parser.application.serialization import tree_from_dict, node_from_dict
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

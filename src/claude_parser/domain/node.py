@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from enum import Enum
-from claude_parser.domain.ports import ContentBase
+from claude_parser.domain.protocols import ContentBase
 from claude_parser.domain.content_bound import ContentBound
 
 

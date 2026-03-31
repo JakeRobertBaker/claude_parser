@@ -1,11 +1,11 @@
 import json
-from claude_parser.adapters.chunk_lines.json_adapter import (
+from claude_parser.application.serialization import (
     tree_from_dict,
     tree_to_dict,
     content_to_dict,
     content_from_dict,
 )
-from claude_parser.adapters.chunk_lines.content import Content
+from claude_parser.domain.content import Content
 
 
 class TestContentSerialization:

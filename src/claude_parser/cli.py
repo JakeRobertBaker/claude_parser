@@ -74,12 +74,14 @@ def main() -> None:
 
     llm = ClaudeCLIAdapter()
     store = FilesystemStore(config.state_dir)
+    store.init()
     vcs = GitAdapter(config.state_dir)
 
     service = ParsingService(
         config=config,
         llm=llm,
-        store=store,
+        tree_repo=store,
+        progress_store=store,
         vcs=vcs,
     )
 

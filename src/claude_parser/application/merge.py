@@ -1,7 +1,7 @@
 import logging
 from typing import Any, cast
 
-from claude_parser.adapters.chunk_lines.content import Content
+from claude_parser.domain.content import Content
 from claude_parser.domain.node import Node, NodeType, TreeDict
 
 logger = logging.getLogger(__name__)

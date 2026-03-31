@@ -1,6 +1,6 @@
 import bisect
 from collections import defaultdict
-from claude_parser.adapters.chunk_lines.content import Content
+from claude_parser.domain.content import Content
 
 LineRange = tuple[int, int]
 

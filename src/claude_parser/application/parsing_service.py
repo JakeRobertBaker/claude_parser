@@ -2,12 +2,7 @@ import json
 import logging
 import os
 
-from claude_parser.adapters.claude_cli import extract_json_from_stream
-from claude_parser.adapters.chunk_lines.json_adapter import (
-    tree_from_dict as chunk_lines_tree_from_dict,
-    tree_to_dict,
-)
-from claude_parser.adapters.filesystem_store import FilesystemStore
+from claude_parser.application.llm_response_parser import extract_json_from_stream
 from claude_parser.application.merge import (
     build_dependency_report,
     check_intra_duplicates,
@@ -21,9 +16,12 @@ from claude_parser.application.prompt_builder import (
     build_retry_prompt,
     build_section_prompt,
 )
+from claude_parser.application.serialization import tree_from_dict, tree_to_dict
 from claude_parser.config import ParserConfig
 from claude_parser.domain.node import Node, TreeDict
 from claude_parser.ports.llm import LLMPort
+from claude_parser.ports.progress_store import ProgressStorePort
+from claude_parser.ports.tree_repository import TreeRepositoryPort
 from claude_parser.ports.vcs import VCSPort
 
 logger = logging.getLogger(__name__)
@@ -39,27 +37,34 @@ class ParsingService:
         self,
         config: ParserConfig,
         llm: LLMPort,
-        store: FilesystemStore,
+        tree_repo: TreeRepositoryPort,
+        progress_store: ProgressStorePort,
         vcs: VCSPort,
     ):
         self.config = config
         self.llm = llm
-        self.store = store
+        self.tree_repo = tree_repo
+        self.progress_store = progress_store
         self.vcs = vcs
 
+        self._chunks_dir = os.path.join(config.state_dir, "chunks")
+        self._logs_dir = os.path.join(config.state_dir, "logs")
+        self._failures_dir = os.path.join(config.state_dir, "failures")
+
     def run(self) -> None:
-        self.store.init()
+        for d in [self._chunks_dir, self._logs_dir, self._failures_dir]:
+            os.makedirs(d, exist_ok=True)
         self.vcs.init_repo()
 
         if not self.config.resume:
             self._run_phase0()
         self._run_main_loop()
 
-        result = self.store.load()
+        result = self.tree_repo.load()
         if result:
             root, tree_dict = result
             report = build_dependency_report(tree_dict)
-            report_path = os.path.join(self.store.state_dir, "dependency_report.json")
+            report_path = os.path.join(self.config.state_dir, "dependency_report.json")
             with open(report_path, "w", encoding="utf-8") as f:
                 json.dump(report, f, indent=2)
             logger.info("Dependency report saved to %s", report_path)
@@ -95,26 +100,26 @@ class ParsingService:
             self._save_failure("phase0", result.stdout)
             raise RuntimeError("Phase 0: Missing 'hierarchy' in output")
 
-        root, tree_dict = chunk_lines_tree_from_dict(metadata["hierarchy"])
+        root, tree_dict = tree_from_dict(metadata["hierarchy"])
 
-        self.store.save(root)
+        self.tree_repo.save(root)
         progress = ProgressState(
             next_start_line=0,
             next_chunk_id=0,
             section_index=0,
         )
-        self.store.save_progress(progress)
+        self.progress_store.save_progress(progress)
         self.vcs.commit_all("Phase 0: skeleton hierarchy")
         logger.info("Phase 0 complete. %d skeleton nodes.", len(tree_dict))
 
     def _run_main_loop(self) -> None:
         raw_lines = self._read_raw_lines()
 
-        progress = self.store.load_progress()
+        progress = self.progress_store.load_progress()
         if progress is None:
             raise RuntimeError("No progress state found. Run without --resume first.")
 
-        result = self.store.load()
+        result = self.tree_repo.load()
         if result is None:
             raise RuntimeError("No tree state found. Run without --resume first.")
         root, tree_dict = result
@@ -155,7 +160,7 @@ class ParsingService:
                 tree_json = json.dumps(tree_to_dict(root), indent=2)
                 window_content = "".join(raw_lines[start:end])
                 chunk_path = os.path.join(
-                    self.store.chunks_dir, f"{chunk_id_str}.md",
+                    self._chunks_dir, f"{chunk_id_str}.md",
                 )
                 prompt = build_section_prompt(
                     window_content, start, end, chunk_id_str,
@@ -185,7 +190,7 @@ class ParsingService:
                     cutoff = metadata.get("cutoff_line", end)
                     progress.next_start_line = cutoff
                     progress.section_index += 1
-                    self.store.save_progress(progress)
+                    self.progress_store.save_progress(progress)
                     continue
 
                 cutoff = metadata.get("cutoff_line", end)
@@ -193,8 +198,8 @@ class ParsingService:
                 progress.next_chunk_id += 1
                 progress.section_index += 1
 
-                self.store.save(root)
-                self.store.save_progress(progress)
+                self.tree_repo.save(root)
+                self.progress_store.save_progress(progress)
                 self.vcs.commit_all(f"{chunk_id_str}")
                 sections_completed += 1
                 logger.info("[Section %d] Committed %s", progress.section_index - 1, chunk_id_str)
@@ -205,7 +210,7 @@ class ParsingService:
                 )
                 progress.next_start_line = end
                 progress.section_index += 1
-                self.store.save_progress(progress)
+                self.progress_store.save_progress(progress)
 
         logger.info("Main loop complete.")
 
@@ -213,7 +218,7 @@ class ParsingService:
         self, raw_lines: list[str], start: int, end: int, chunk_id: str,
     ) -> str:
         """Write window to disk for debug logging (not used in the prompt)."""
-        window_path = os.path.join(self.store.state_dir, f"current_window_{chunk_id}.md")
+        window_path = os.path.join(self.config.state_dir, f"current_window_{chunk_id}.md")
         with open(window_path, "w", encoding="utf-8") as f:
             f.writelines(raw_lines[start:end])
         return window_path
@@ -233,7 +238,7 @@ class ParsingService:
 
         window_content = "".join(raw_lines[start:end])
         tree_json = json.dumps(tree_to_dict(root), indent=2)
-        chunk_path = os.path.join(self.store.chunks_dir, f"{chunk_id}.md")
+        chunk_path = os.path.join(self._chunks_dir, f"{chunk_id}.md")
         prompt = build_section_prompt(
             window_content, start, end, chunk_id,
             overlap_text, tree_json, chunk_path,
@@ -244,12 +249,12 @@ class ParsingService:
             prompt=prompt,
             model=self.config.task_model,
             allowed_tools=_SECTION_TOOLS,
-            add_dirs=[self.store.state_dir],
+            add_dirs=[self.config.state_dir],
             timeout=self.config.timeout,
         )
 
         log_path = os.path.join(
-            self.store.logs_dir, f"{chunk_id}.json",
+            self._logs_dir, f"{chunk_id}.json",
         )
         with open(log_path, "w", encoding="utf-8") as f:
             f.write(result.stdout)
@@ -281,7 +286,7 @@ class ParsingService:
                 prompt=retry_prompt,
                 model=self.config.task_model,
                 allowed_tools=_SECTION_TOOLS,
-                add_dirs=[self.store.state_dir],
+                add_dirs=[self.config.state_dir],
                 timeout=self.config.timeout,
             )
 
@@ -379,7 +384,7 @@ class ParsingService:
             return f.readlines()
 
     def _save_failure(self, label: str, content: str) -> None:
-        path = os.path.join(self.store.failures_dir, f"{label}_raw_response.txt")
+        path = os.path.join(self._failures_dir, f"{label}_raw_response.txt")
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         logger.debug("Saved failure log to %s", path)

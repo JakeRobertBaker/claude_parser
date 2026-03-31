@@ -2,10 +2,7 @@ import json
 import logging
 import os
 
-from claude_parser.adapters.chunk_lines.json_adapter import (
-    tree_from_dict,
-    tree_to_dict,
-)
+from claude_parser.application.serialization import tree_from_dict, tree_to_dict
 from claude_parser.application.progress import ProgressState
 from claude_parser.domain.node import Node, TreeDict
 
@@ -26,21 +23,8 @@ class FilesystemStore:
     def progress_path(self) -> str:
         return os.path.join(self.state_dir, "progress.json")
 
-    @property
-    def chunks_dir(self) -> str:
-        return os.path.join(self.state_dir, "chunks")
-
-    @property
-    def logs_dir(self) -> str:
-        return os.path.join(self.state_dir, "logs")
-
-    @property
-    def failures_dir(self) -> str:
-        return os.path.join(self.state_dir, "failures")
-
     def init(self) -> None:
-        for d in [self.state_dir, self.chunks_dir, self.logs_dir, self.failures_dir]:
-            os.makedirs(d, exist_ok=True)
+        os.makedirs(self.state_dir, exist_ok=True)
         logger.info("Initialized state directory: %s", self.state_dir)
 
     # -- TreeRepositoryPort --
