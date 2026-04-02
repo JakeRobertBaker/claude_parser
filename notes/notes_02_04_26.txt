@@ -4,22 +4,118 @@ Remove theory as a node attribute. Make it @property that returns bool True when
 
 Nodes have optional proves field on the result they prove.
 
-
 ## Haiku Loop Idea
-Single Phase now
+Single phase for now.
 
-We will have the Haiku model read large batches, clean and parse structure.
+Haiku reads large batches, cleans OCR markdown, and annotates document structure inline.
 
-Comment the markdown file with
+Use comments like:
 
 ```markdown
-<!-- tree:start id="thm_1_2" type="generic" anc="ch_1/sec_1_2" title="Theorem 1.2" -->
+<!-- tree:start id="thm_1_2" type="theorem" anc="ch_1/sec_1_2" title="Theorem 1.2" -->
+````
+
+Attributes:
+
+* `id`
+* `title`
+* `type`
+* `anc` (optional, recommended; advisory only)
+* `proves` (optional; warn at validation if a proof node has no `proves`, also warn if proves points towards a non theory type (not any of theorem, lemma, proposition, proof) )
+* `dependencies` (optional)
+
+Notes:
+
+* `type` should be the real semantic type, not `generic` for theorem nodes
+* nesting is the source of truth for structure
+* `proves` and `dependencies` are semantic links, not tree structure
+* type="theorem|lemma|proposition" nodes are always the theorem statements. The book may well have sections/chapters/headers called "Theorem A" that may or may not be the theorem statement.
+
+
+Example
+Raw 
+```
+# Chapter X
+## Theorem A
+Preamble
+Statement of Theorem A
+Remarks
+Theorem A Proof
+More Remarks
 ```
 
-These comments have attributes
+Note, this example can have many interpretations. Via annotation one is picked.
 
-- id
-- title
-- type
-- anc (optional but strongly recommend)
-- proves (optional)
+```
+
+Interpretation A
+
+ch_x
+├── preamble (content= Preamble, type="generic")
+├── theorem_a (no content, type="generic")
+│   └── thm_a_statement (content= Statement of Theorem A, type="theorem")
+├── remarks (content= Remarks, type="remark")
+├── thm_a_proof (content= Theorem A Proof, type="proof", proves="thm_a_statement")
+└── more_remarks (content= More Remarks, type="remark")
+
+
+Interpretation A
+ch_x (content= Pramble, type="generic")
+├── thm_a (content= Statement of Theorem A, type="theorem")
+├── remarks (content= Remarks, type="remark")
+├── thm_a_proof (content= Theorem A Proof, type="proof")
+└── more_remarks (content= More Remarks, type="remark")
+```
+
+or
+```
+Interpretation B
+ch_x (content= Preamble, type="generic")
+├── thm_a (type="generic")
+│   ├── thn_a_state (type="theorem")
+│   ├── Remarks (type="remarks")
+│   └── Proof (type="proof")
+└── More_Remarks (type="remarks")
+```
+or
+```
+Interpretation C
+Ch_X
+├── Preamble
+└── Sec_Thm_A
+    ├── Thm_A
+    │   ├── Statement
+    │   ├── Remarks
+    │   └── Proof
+    └── More_Remarks
+```
+In line example for Interpretation B.
+```
+<!-- tree:start id="ch_x" type="generic" title="Chapter X" -->
+
+<!-- tree:start id="preamble" type="generic" anc="ch_x" title="Preamble" -->
+Preamble
+<!-- tree:end id="preamble" -->
+
+<!-- tree:start id="thm_a" type="generic" anc="ch_x" title="Theorem A" -->
+
+<!-- tree:start id="thm_a_statement" type="theorem" anc="ch_x/thm_a" title="Theorem A" -->
+Statement of Theorem A
+<!-- tree:end id="thm_a_statement" -->
+
+<!-- tree:start id="thm_a_remarks" type="remarks" anc="ch_x/thm_a" title="Remarks" -->
+Remarks
+<!-- tree:end id="thm_a_remarks" -->
+
+<!-- tree:start id="thm_a_proof" type="proof" anc="ch_x/thm_a" title="Proof" proves="thm_a_statement" -->
+Theorem A Proof
+<!-- tree:end id="thm_a_proof" -->
+
+<!-- tree:end id="thm_a" -->
+
+<!-- tree:start id="more_remarks" type="remarks" anc="ch_x" title="More Remarks" -->
+More Remarks
+<!-- tree:end id="more_remarks" -->
+
+<!-- tree:end id="ch_x" -->
+```

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from collections.abc import Mapping, Sequence
-from enum import Enum, StrEnum
+from enum import StrEnum
 from claude_parser.domain.protocols import ContentBase
 from claude_parser.domain.content_bound import ContentBound
 
@@ -17,7 +17,8 @@ class NodeType(StrEnum):
     PRF = "proof"
 
 
-TheoryTypes = [NodeType.DEF, NodeType.THM, NodeType.LEM, NodeType.PROP, NodeType.PRF]
+ProveableTypes = [NodeType.THM, NodeType.LEM, NodeType.PROP, NodeType.PRF]
+TheoryTypes = [NodeType.DEF] + ProveableTypes
 
 
 class TreeDict(Mapping):
@@ -69,6 +70,7 @@ class Node:
     parent: Node | None
     _node_dict: TreeDict
     _dependency_ids: list[str]
+    _proves_id: str | None
 
     def __init__(
         self,
