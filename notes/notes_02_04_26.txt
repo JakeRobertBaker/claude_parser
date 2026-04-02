@@ -2,6 +2,8 @@
 
 Remove theory as a node attribute. Make it @property that returns bool True when type is one of: definition, theorem, lemma, proposition.
 
+Node.type is an optional parameter that defaults to generic.
+
 Nodes have optional proves field on the result they prove.
 
 ## Haiku Loop Idea
@@ -13,28 +15,29 @@ Use comments like:
 
 ```markdown
 <!-- tree:start id="thm_1_2" type="theorem" anc="ch_1/sec_1_2" title="Theorem 1.2" -->
+...
+<!-- tree:end id="thm_1_2" -->
 ````
-
 Attributes:
 
 * `id`
 * `title`
-* `type`
+* `type` (optional; only for special semantic/math types)
 * `anc` (optional, recommended; advisory only)
-* `proves` (optional; warn at validation if a proof node has no `proves`, also warn if proves points towards a non theory type (not any of theorem, lemma, proposition, proof) )
+* `proves` (optional; warn at validation if a proof node has no `proves`, also warn if `proves` points to anything other than "definition", "theorem", "lemma", "proposition", or "corollary")
 * `dependencies` (optional)
 
-Notes:
+Semantic types are: "definition", "theorem", "lemma", "proposition", "corollary", "proof", "remark", "example", "exercise"
 
-* `type` should be the real semantic type, not `generic` for theorem nodes
+Notes
+
 * nesting is the source of truth for structure
 * `proves` and `dependencies` are semantic links, not tree structure
-* type="theorem|lemma|proposition" nodes are always the theorem statements. The book may well have sections/chapters/headers called "Theorem A" that may or may not be the theorem statement.
-
+* type="definition|theorem|lemma|proposition|corollary" nodes are always statement nodes. Their proof, if present, is a separate proof type node.
 
 Example
-Raw 
-```
+raw 
+```markdown
 # Chapter X
 ## Theorem A
 Preamble
@@ -46,74 +49,52 @@ More Remarks
 
 Note, this example can have many interpretations. Via annotation one is picked.
 
-```
-
 Interpretation A
 
 ch_x
-├── preamble (content= Preamble, type="generic")
-├── theorem_a (no content, type="generic")
-│   └── thm_a_statement (content= Statement of Theorem A, type="theorem")
-├── remarks (content= Remarks, type="remark")
-├── thm_a_proof (content= Theorem A Proof, type="proof", proves="thm_a_statement")
-└── more_remarks (content= More Remarks, type="remark")
+├── preamble (content=Preamble)
+├── thm_a (content=Statement of Theorem A, type="theorem")
+├── remarks (content=Remarks, type="remark")
+├── thm_a_proof (content=Theorem A Proof, type="proof", proves="thm_a")
+└── more_remarks (content=More Remarks, type="remark")
 
-
-Interpretation A
-ch_x (content= Pramble, type="generic")
-├── thm_a (content= Statement of Theorem A, type="theorem")
-├── remarks (content= Remarks, type="remark")
-├── thm_a_proof (content= Theorem A Proof, type="proof")
-└── more_remarks (content= More Remarks, type="remark")
-```
-
-or
-```
 Interpretation B
-ch_x (content= Preamble, type="generic")
-├── thm_a (type="generic")
-│   ├── thn_a_state (type="theorem")
-│   ├── Remarks (type="remarks")
-│   └── Proof (type="proof")
-└── More_Remarks (type="remarks")
-```
-or
-```
-Interpretation C
-Ch_X
-├── Preamble
-└── Sec_Thm_A
-    ├── Thm_A
-    │   ├── Statement
-    │   ├── Remarks
-    │   └── Proof
-    └── More_Remarks
-```
-In line example for Interpretation B.
-```
-<!-- tree:start id="ch_x" type="generic" title="Chapter X" -->
 
-<!-- tree:start id="preamble" type="generic" anc="ch_x" title="Preamble" -->
+ch_x
+├── preamble (content=Preamble)
+├── thm_a (no content)
+│   ├── thm_a_statement (content=Statement of Theorem A, type="theorem")
+│   ├── remarks (content=Remarks, type="remark")
+│   ├── thm_a_proof (content=Theorem A Proof, type="proof", proves="thm_a_statement")
+└── more_remarks (content=More Remarks, type="remark")
+
+Inline version of Interpretation B
+```
+<!-- tree:start id="ch_x" title="Chapter X" -->
+# Chapter X
+
+<!-- tree:start id="preamble_1" anc="ch_x" title="Preamble" -->
 Preamble
-<!-- tree:end id="preamble" -->
+<!-- tree:end id="preamble_1" -->
 
-<!-- tree:start id="thm_a" type="generic" anc="ch_x" title="Theorem A" -->
+<!-- tree:start id="thm_a" anc="ch_x" title="Theorem A" -->
+## Theorem A
 
 <!-- tree:start id="thm_a_statement" type="theorem" anc="ch_x/thm_a" title="Theorem A" -->
 Statement of Theorem A
 <!-- tree:end id="thm_a_statement" -->
 
-<!-- tree:start id="thm_a_remarks" type="remarks" anc="ch_x/thm_a" title="Remarks" -->
+<!-- tree:start id="thm_a_remarks" type="remark" anc="ch_x/thm_a" title="Remarks" -->
 Remarks
 <!-- tree:end id="thm_a_remarks" -->
 
-<!-- tree:start id="thm_a_proof" type="proof" anc="ch_x/thm_a" title="Proof" proves="thm_a_statement" -->
+<!-- tree:start id="thm_a_proof" type="proof" anc="ch_x/thm_a" title="Proof of Theorem A" proves="thm_a_statement" -->
 Theorem A Proof
 <!-- tree:end id="thm_a_proof" -->
 
 <!-- tree:end id="thm_a" -->
 
-<!-- tree:start id="more_remarks" type="remarks" anc="ch_x" title="More Remarks" -->
+<!-- tree:start id="more_remarks" type="remark" anc="ch_x" title="More Remarks" -->
 More Remarks
 <!-- tree:end id="more_remarks" -->
 
