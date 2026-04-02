@@ -33,7 +33,7 @@ Notes
 
 * nesting is the source of truth for structure
 * `proves` and `dependencies` are semantic links, not tree structure
-* type="definition|theorem|lemma|proposition|corollary" nodes are always statement nodes. Their proof, if present, is a separate proof type node.
+* type="definition|theorem|lemma|proposition|corollary" nodes are always the actual statement. Their proof, if present, is a separate proof type node. Further discussion is a separate node.
 
 Example
 raw 
@@ -47,7 +47,7 @@ Theorem A Proof
 More Remarks
 ```
 
-Note, this example can have many interpretations. Via annotation one is picked.
+Note, this example can have many interpretations. Annotation picks one interpretation.
 
 Interpretation A
 
