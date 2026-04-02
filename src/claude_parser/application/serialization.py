@@ -40,9 +40,7 @@ def node_from_dict(
         id=node_dict["id"],
         title=node_dict["title"],
         children=children,
-        content_list=[
-            content_deserializer(c) for c in node_dict.get("content", [])
-        ],
+        content_list=[content_deserializer(c) for c in node_dict.get("content", [])],
         node_type=NodeType(node_dict.get("node_type", "generic")),
         theory=node_dict.get("theory", False),
         node_dict=node_registry,
@@ -66,8 +64,8 @@ def node_to_dict(
         result["node_type"] = node.node_type.value
     if node.theory:
         result["theory"] = True
-    if node._dependencies:
-        result["dependencies"] = node._dependencies
+    if node._dependency_ids:
+        result["dependencies"] = node._dependency_ids
     if node.children:
         result["children"] = [
             node_to_dict(child, content_serializer) for child in node.children

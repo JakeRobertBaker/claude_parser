@@ -1,11 +1,11 @@
 from __future__ import annotations
 from collections.abc import Mapping, Sequence
-from enum import Enum
+from enum import Enum, StrEnum
 from claude_parser.domain.protocols import ContentBase
 from claude_parser.domain.content_bound import ContentBound
 
 
-class NodeType(Enum):
+class NodeType(StrEnum):
     GENERIC = "generic"
     DEF = "definition"
     THM = "theorem"
@@ -14,6 +14,10 @@ class NodeType(Enum):
     REM = "remark"
     EXC = "exercise"
     EG = "example"
+    PRF = "proof"
+
+
+TheoryTypes = [NodeType.DEF, NodeType.THM, NodeType.LEM, NodeType.PROP, NodeType.PRF]
 
 
 class TreeDict(Mapping):
@@ -62,10 +66,9 @@ class Node:
     children: list[Node]
     content_list: list[ContentBase]
     node_type: NodeType
-    theory: bool
     parent: Node | None
     _node_dict: TreeDict
-    _dependencies: list[str]
+    _dependency_ids: list[str]
 
     def __init__(
         self,
@@ -74,19 +77,21 @@ class Node:
         children: list[Node],
         content_list: Sequence[ContentBase] | None,
         node_type: NodeType,
-        theory: bool,
         node_dict: TreeDict,
         dependency_ids: list[str] | None = None,
+        proves_id: str | None = None,
         parent: Node | None = None,
     ):
         self.id = id
         self.title = title
         self.children = []
-        self.content_list: list[ContentBase] = list(content_list) if content_list else []
+        self.content_list: list[ContentBase] = (
+            list(content_list) if content_list else []
+        )
         self.node_type = node_type
-        self.theory = theory
         self._node_dict = node_dict
-        self._dependencies = dependency_ids or []
+        self._dependency_ids = dependency_ids or []
+        self._proves_id = proves_id
         self.parent = None
 
         if parent:
@@ -139,7 +144,7 @@ class Node:
     @property
     def dependencies(self) -> list[Node]:
         resolved = []
-        for dep_id in self._dependencies:
+        for dep_id in self._dependency_ids:
             try:
                 resolved.append(self._node_dict[dep_id])
             except KeyError:
@@ -147,6 +152,22 @@ class Node:
                     f"Dependency '{dep_id}' for node '{self.id}' not found in NodeDict."
                 )
         return resolved
+
+    @property
+    def theory(self) -> bool:
+        return self.node_type in TheoryTypes
+
+    @property
+    def proves(self) -> Node | None:
+        if isinstance(self._proves_id, str):
+            proves_id = self._proves_id
+            try:
+                proves = self._node_dict[proves_id]
+            except KeyError:
+                raise KeyError(
+                    f"Proves '{proves_id}' for node '{self.id} not found in NodeDict'"
+                )
+            return proves
 
     def _content_extrema_max(self) -> ContentBase | None:
         """Get the max Content of this Node's and all of its descendant's content."""
@@ -224,7 +245,11 @@ class Node:
         """
         # Rule 1
         upper_bound = self.max_ancestor_content()
-        if upper_bound and child.content_bound() and not child.is_after_content(upper_bound):
+        if (
+            upper_bound
+            and child.content_bound()
+            and not child.is_after_content(upper_bound)
+        ):
             raise ValueError(
                 f"Cannot add child '{child.id}': its content does not follow '{self.id}'."
             )

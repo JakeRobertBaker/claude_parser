@@ -1,0 +1,25 @@
+## Other code change.
+
+Remove theory as a node attribute. Make it @property that returns bool True when type is one of: definition, theorem, lemma, proposition.
+
+Nodes have optional proves field on the result they prove.
+
+
+## Haiku Loop Idea
+Single Phase now
+
+We will have the Haiku model read large batches, clean and parse structure.
+
+Comment the markdown file with
+
+```markdown
+<!-- tree:start id="thm_1_2" type="generic" anc="ch_1/sec_1_2" title="Theorem 1.2" -->
+```
+
+These comments have attributes
+
+- id
+- title
+- type
+- anc (optional but strongly recommend)
+- proves (optional)

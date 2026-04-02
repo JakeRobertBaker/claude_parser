@@ -78,7 +78,9 @@ def validate_chunk_file(
     if line_diff > 0:
         logger.warning(
             "Chunk file has %d lines but metadata claims %d (off by %d)",
-            actual_lines, max_last_line, line_diff,
+            actual_lines,
+            max_last_line,
+            line_diff,
         )
 
     # Check cutoff vs content coverage — warn if very low
@@ -90,12 +92,16 @@ def validate_chunk_file(
             logger.warning(
                 "Low coverage: %d cleaned lines for %d raw lines (%.0f%%) "
                 "— content may have been skipped",
-                actual_lines, raw_lines_covered, ratio * 100,
+                actual_lines,
+                raw_lines_covered,
+                ratio * 100,
             )
         if ratio < 0.30:
             logger.warning(
                 "Low coverage ratio: %d cleaned lines for %d raw lines (%.0f%%)",
-                actual_lines, raw_lines_covered, ratio * 100,
+                actual_lines,
+                raw_lines_covered,
+                ratio * 100,
             )
 
     return None
@@ -127,15 +133,15 @@ def merge_chunk(
                 existing.add_content(content)
                 logger.debug(
                     "Added content (chunk %d, lines %d-%d) to existing node '%s'",
-                    chunk_number, content_data["first_line"],
-                    content_data["last_line"], node_id,
+                    chunk_number,
+                    content_data["first_line"],
+                    content_data["last_line"],
+                    node_id,
                 )
         else:
             parent_id = node_data.get("parent_id")
             if not parent_id:
-                raise ValueError(
-                    f"New node '{node_id}' missing required 'parent_id'"
-                )
+                raise ValueError(f"New node '{node_id}' missing required 'parent_id'")
             parent_node = tree_dict[parent_id]
 
             node_type = NodeType(node_data.get("node_type", "generic"))
@@ -173,25 +179,24 @@ def build_dependency_report(tree_dict: TreeDict) -> dict:
         if not node.theory:
             continue
 
-        if not node._dependencies:
+        if not node._dependency_ids:
             zero_deps.append(node_id)
             continue
 
-        for dep_id in node._dependencies:
+        for dep_id in node._dependency_ids:
             if dep_id not in tree_dict._data:
                 unresolved.append({"node_id": node_id, "missing_dep": dep_id})
 
     report = {
         "unresolved_dependencies": unresolved,
         "theory_nodes_with_zero_dependencies": zero_deps,
-        "total_theory_nodes": sum(
-            1 for n in tree_dict._data.values() if n.theory
-        ),
+        "total_theory_nodes": sum(1 for n in tree_dict._data.values() if n.theory),
     }
 
     if unresolved:
         logger.warning(
-            "%d unresolved dependencies found", len(unresolved),
+            "%d unresolved dependencies found",
+            len(unresolved),
         )
     logger.info(
         "Dependency report: %d theory nodes, %d with zero deps, %d unresolved",

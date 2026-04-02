@@ -30,9 +30,7 @@ class TestTreeRoundtrip:
                 {
                     "id": "ch01",
                     "title": "Chapter 1",
-                    "content": [
-                        {"chunk_number": 0, "first_line": 1, "last_line": 50}
-                    ],
+                    "content": [{"chunk_number": 0, "first_line": 1, "last_line": 50}],
                     "children": [
                         {
                             "id": "def:metric",
@@ -49,9 +47,7 @@ class TestTreeRoundtrip:
                 {
                     "id": "ch02",
                     "title": "Chapter 2",
-                    "content": [
-                        {"chunk_number": 1, "first_line": 1, "last_line": 80}
-                    ],
+                    "content": [{"chunk_number": 1, "first_line": 1, "last_line": 80}],
                 },
             ],
         }
@@ -66,7 +62,7 @@ class TestTreeRoundtrip:
         assert root2.children[0].id == "ch01"
         assert root2.children[0].children[0].id == "def:metric"
         assert root2.children[0].children[0].theory is True
-        assert root2.children[0].children[0]._dependencies == ["def:set"]
+        assert root2.children[0].children[0]._dependency_ids == ["def:set"]
         assert root2.children[1].id == "ch02"
 
     def test_empty_tree_roundtrip(self):
@@ -102,9 +98,7 @@ class TestTreeRoundtrip:
                 {
                     "id": "ch01",
                     "title": "Ch 1",
-                    "content": [
-                        {"chunk_number": 0, "first_line": 1, "last_line": 10}
-                    ],
+                    "content": [{"chunk_number": 0, "first_line": 1, "last_line": 10}],
                 }
             ],
         }

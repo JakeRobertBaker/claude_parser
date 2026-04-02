@@ -6,13 +6,14 @@ A textbook or paper is a tree.
 
 Each node on the tree has attributes
 
-- id: unique_id
+- id: unique_id, want to make snake_case
 - title: Sensible Title, json safe string.
-- children:
+- children: list of nodes
 - content: Point to the chunk content. Can be empty.
-- type: One of, generic, definition, theorem, lemma, proposition, remarks, exercise.
-- theory: True if type is any of definition, theorem, lemma, proposition
+- type: One of, generic, definition, theorem, lemma, ... (see NodeType(StrEnum) class in node.py).
 - dependencies: This attribute is only true if we are a theory node, a list of the dependant theory nodes.
+
+Theory nodes are when type is one of: definition, theorem, lemma, proposition, proof, ... (see TheoryTypes in nodes.py)
 
 We will implement content as pointing to a .md file.
 

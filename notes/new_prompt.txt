@@ -1,4 +1,4 @@
-Your task is to clean a textbook and provide structural hierarchy.
+Your task is to clean a raw markdown text of a scanned mathematics textbook.
 
 You can see a {raw_start}, {raw_end} lines of the raw markdown.
 
@@ -11,13 +11,12 @@ Theorem A Proof
 More Remarks
 ```
 ## Task
-Clean the raw text in the window below and assign comments assigning hierarchy.
+Clean the raw text in the window below and add comment lines denoting the structural hierarchy.
 
 ## Cleaning Rules
 - Fix: broken LaTeX (unclosed $, split expressions), broken markdown, page numbers, headers/footers, watermarks, redundant blank lines, broken paragraph joins.
 - Preserve: all math content and notation, the author's voice, math environments, lists, theory blocks.
-- Some section/chapter headings (# and ##) in the raw text are genuine, others are OCR mistakes. Put genuine headings into the structural comment tree.
-
-  Omit: section/chapter heading lines (# and ##) from your raw text. These are captured in the structural comments. Note that some raw markdown headings will be incorrect and others correct due to OCR. Genuine headings become part of the tree structure your comments capture.
+- Determine which headers (#, ##, ...) are genuine, some can be OCR mistakes. Put genuine headings into the structural comment tree.
+- Theorems should be their own node. The theorem proof can be their own node.
 
 
