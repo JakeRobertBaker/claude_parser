@@ -18,3 +18,5 @@ uv run ruff check --fix src/ tests/
 # ty - type checking
 uv run ty check src/ tests/
 ```
+
+## Add an example command
