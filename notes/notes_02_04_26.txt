@@ -1,8 +1,6 @@
 ## Other code change.
 
-Remove theory as a node attribute. Make it @property that returns bool True when type is one of: definition, theorem, lemma, proposition.
-
-Node.type is an optional parameter that defaults to generic.
+Node.type is an optional semantic parameter. Need to change this in node.py. Maybe make it return "generic by default?"
 
 Nodes have optional proves field on the result they prove.
 
@@ -33,7 +31,7 @@ Notes
 
 * nesting is the source of truth for structure
 * `proves` and `dependencies` are semantic links, not tree structure
-* type="definition|theorem|lemma|proposition|corollary" nodes are always the actual statement. Their proof, if present, is a separate proof type node. Further discussion is a separate node.
+* actual statements of definition|...|corollary in the test must be their own type="definition|theorem|lemma|proposition|corollary" nodes. Their proof, if present, is a separate proof type node. Further discussion is a separate node.
 
 Example
 raw 
@@ -100,3 +98,34 @@ More Remarks
 
 <!-- tree:end id="ch_x" -->
 ```
+
+## Parsing Service
+
+l=0
+u = l + B
+
+Service writes lines [l,u] of raw.md to raw_1.md
+
+LLM reads raw_1.md and writes clean_1.md
+
+N_1 = number of lines in clean_1.md
+
+clean_1.md will have a syntaxed comment at line c <=N_1. When c < N_1 the LLM has decided to cutoff early where sections split nicely.
+
+N_1 = n_cleaned + 1 (the cutoff comment) + n_unchanged
+c = n_cleaned + 1
+n_unchanged = N_1 - c
+
+raw.md [u-n_unchanged, u], raw_1.md[u-l-n_changed, u-l], clean_1.md[c+1 N_1] should be identical (lines inclusive denoted here.)
+
+LLM calls an MCP or cli validator (e.g. uv run python validator...) and sees validation passes/warnings/errors.
+
+The validator checks
+- clean_1.md post cutoff agrees with raw_1.md
+- Whether the inline comments create a consistent tree. This should be like an abstract syntax tree. If syntax is healthy then we should be able to make this into a Node object.
+
+LLM get's opportunity to apply fixes to clean_1.md
+
+The service writes lines [u-n_unchanged, u-n_unchanged + B]
+
+...
