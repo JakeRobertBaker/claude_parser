@@ -1,10 +1,10 @@
-## Other code change.
+# Other code change.
 
 Node.type is an optional semantic parameter. Need to change this in node.py. Maybe make it return "generic by default?"
 
 Nodes have optional proves field on the result they prove.
 
-## Haiku Loop Idea
+# Haiku Loop Idea
 Single phase for now.
 
 Haiku reads large batches, cleans OCR markdown, and annotates document structure inline.
@@ -15,25 +15,44 @@ Use comments like:
 <!-- tree:start id="thm_1_2" type="theorem" anc="ch_1/sec_1_2" title="Theorem 1.2" -->
 ...
 <!-- tree:end id="thm_1_2" -->
-````
+```
+
 Attributes:
+- id (required, unique)
+- title (required)
+- type (optional; only for semantic math units)
+- anc (optional; advisory only)
+- proves (optional; only for type="proof")
+- dependencies (optional; list of prerequisite node ids)
 
-* `id`
-* `title`
-* `type` (optional; only for special semantic/math types)
-* `anc` (optional, recommended; advisory only)
-* `proves` (optional; warn at validation if a proof node has no `proves`, also warn if `proves` points to anything other than "definition", "theorem", "lemma", "proposition", or "corollary")
-* `dependencies` (optional)
+Semantic types:
+definition, theorem, lemma, proposition, corollary, proof, remark, example, exercise, axiom
 
-Semantic types are: "definition", "theorem", "lemma", "proposition", "corollary", "proof", "remark", "example", "exercise"
+Rules:
+- Nesting is the source of truth for structure
+- Containers (chapters/sections/theorem blocks) should have no semantic type
+- Use semantic `type` only for text spans that are actually that thing. E.g. a theorem statement has type="theorem", subsections named after the theorem, further discussions are separate nodes.
+- Proofs must be separate nodes with type="proof" and proves="<statement_id>"
 
-Notes
+proves:
+- Only on type="proof"
 
-* nesting is the source of truth for structure
-* `proves` and `dependencies` are semantic links, not tree structure
-* actual statements of definition|...|corollary in the test must be their own type="definition|theorem|lemma|proposition|corollary" nodes. Their proof, if present, is a separate proof type node. Further discussion is a separate node.
+dependencies:
+- Points to earlier nodes required for understanding/justification
+- Use appropriately (material prerequisites only, not exhaustive links)
+- References existing earlier nodes (forward refs unlikely)
 
-Example
+Validator:
+
+Outputs a warning if any of these happen, there may be very rare permissible cases.
+- If non proof node has `proves`.
+- If proof node does not have `proves` value.
+- If `proves` points towards type other than (theorem|lemma|proposition|corollary).
+- If `dependencies` points to node if that does note exist.
+
+
+
+Example:
 raw 
 ```markdown
 # Chapter X
@@ -99,7 +118,7 @@ More Remarks
 <!-- tree:end id="ch_x" -->
 ```
 
-## Parsing Service
+# Parsing Service
 
 l=0
 u = l + B
