@@ -32,14 +32,14 @@ class ParsingService:
         self.state = state
         self.vcs = vcs
 
-        self._chunks_dir = os.path.join(config.state_dir, "chunks")
-        self._raw_dir = os.path.join(config.state_dir, "raw_batches")
+        self._clean_dir = os.path.join(config.state_dir, "clean")
+        self._raw_dir = os.path.join(config.state_dir, "raw")
         self._logs_dir = os.path.join(config.state_dir, "logs")
         self._failures_dir = os.path.join(config.state_dir, "failures")
         self._memory_path = os.path.join(config.state_dir, "memory.md")
 
     def run(self) -> None:
-        for d in [self._chunks_dir, self._raw_dir, self._logs_dir, self._failures_dir]:
+        for d in [self._clean_dir, self._raw_dir, self._logs_dir, self._failures_dir]:
             os.makedirs(d, exist_ok=True)
         self.vcs.init_repo()
 
@@ -85,8 +85,9 @@ class ParsingService:
                 chunk_id, start + 1, end,
             )
 
-            # Write raw batch file
-            raw_batch_path = os.path.join(self._raw_dir, f"{chunk_id}_raw.md")
+            # Write raw batch file (raw_i.md per notes spec)
+            batch_num = pipeline_state.next_chunk_id
+            raw_batch_path = os.path.join(self._raw_dir, f"raw_{batch_num}.md")
             with open(raw_batch_path, "w", encoding="utf-8") as f:
                 f.writelines(raw_lines[start:end])
 
@@ -99,7 +100,7 @@ class ParsingService:
                 with open(self._memory_path, encoding="utf-8") as f:
                     memory_text = f.read()
 
-            clean_path = os.path.join(self._chunks_dir, f"{chunk_id}.md")
+            clean_path = os.path.join(self._clean_dir, f"clean_{batch_num}.md")
             known_ids = list(tree_dict._data.keys())
 
             prompt = build_batch_prompt(
@@ -146,7 +147,19 @@ class ParsingService:
             metadata = extract_json_from_stream(result.stdout)
             cutoff_raw_line = end  # default: processed everything
             if metadata and "cutoff_raw_line" in metadata:
-                cutoff_raw_line = metadata["cutoff_raw_line"]
+                reported = metadata["cutoff_raw_line"]
+                if isinstance(reported, int):
+                    if reported < start:
+                        # LLM reported batch-relative line, convert to source line
+                        cutoff_raw_line = start + reported
+                        logger.warning(
+                            "[%s] cutoff %d < batch start %d, treating as batch-relative → %d",
+                            chunk_id, reported, start, cutoff_raw_line,
+                        )
+                    else:
+                        cutoff_raw_line = reported
+                    # Clamp to batch bounds
+                    cutoff_raw_line = max(start + 1, min(cutoff_raw_line, end))
 
             # Read and parse the clean file
             if not os.path.exists(clean_path):
@@ -234,8 +247,8 @@ class ParsingService:
         """Get last N lines from previous clean file as context."""
         if state.next_chunk_id == 0:
             return ""
-        prev_chunk_id = f"chunk_{state.next_chunk_id - 1:03d}"
-        prev_clean_path = os.path.join(self._chunks_dir, f"{prev_chunk_id}.md")
+        prev_num = state.next_chunk_id - 1
+        prev_clean_path = os.path.join(self._clean_dir, f"clean_{prev_num}.md")
         if not os.path.exists(prev_clean_path):
             return ""
 
@@ -256,18 +269,18 @@ class ParsingService:
         return "".join(context_lines)
 
     def _final_merge(self) -> None:
-        """Concatenate all clean chunks (before cutoff) into final.md."""
-        chunks = sorted(
-            f for f in os.listdir(self._chunks_dir) if f.endswith(".md")
+        """Concatenate all clean files (before cutoff) into final.md."""
+        clean_files = sorted(
+            f for f in os.listdir(self._clean_dir) if f.endswith(".md")
         )
-        if not chunks:
-            logger.info("No chunks to merge.")
+        if not clean_files:
+            logger.info("No clean files to merge.")
             return
 
         final_path = os.path.join(self.config.state_dir, "final.md")
         with open(final_path, "w", encoding="utf-8") as out:
-            for chunk_file in chunks:
-                chunk_path = os.path.join(self._chunks_dir, chunk_file)
+            for clean_file in clean_files:
+                chunk_path = os.path.join(self._clean_dir, clean_file)
                 with open(chunk_path, encoding="utf-8") as f:
                     lines = f.readlines()
 
@@ -277,7 +290,7 @@ class ParsingService:
                         break
                     out.write(line)
 
-        logger.info("Final merge complete: %s (%d chunks)", final_path, len(chunks))
+        logger.info("Final merge complete: %s (%d files)", final_path, len(clean_files))
 
     def _read_raw_lines(self) -> list[str]:
         with open(self.config.raw_path, encoding="utf-8") as f:
