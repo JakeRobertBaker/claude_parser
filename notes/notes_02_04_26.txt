@@ -1,9 +1,3 @@
-# Other code change.
-
-Node.type is an optional semantic parameter. Need to change this in node.py. Maybe make it return "generic by default?"
-
-Nodes have optional proves field on the result they prove.
-
 # Haiku Loop Idea
 Single phase for now.
 
@@ -43,14 +37,14 @@ dependencies:
 - References existing earlier nodes (forward refs unlikely)
 
 Validator:
-
 Outputs a warning if any of these happen, there may be very rare permissible cases.
 - If non proof node has `proves`.
 - If proof node does not have `proves` value.
 - If `proves` points towards type other than (theorem|lemma|proposition|corollary).
 - If `dependencies` points to node if that does note exist.
-
-
+Outputs if any of are violated:
+- Not proper nesting (no crossing spans)
+- Unique ids
 
 Example:
 raw 
@@ -120,6 +114,10 @@ More Remarks
 
 # Parsing Service
 
+Files are created in the State/ProgresStore dir.
+
+## Basic Loop idea.
+
 l=0
 u = l + B
 
@@ -145,6 +143,33 @@ The validator checks
 
 LLM get's opportunity to apply fixes to clean_1.md
 
-The service writes lines [u-n_unchanged, u-n_unchanged + B]
+The service writes lines [u-n_unchanged, u-n_unchanged + B] of raw.md to raw_2.md.
 
-...
+continue ...
+
+## Issue
+
+A node can start in one batch and end in another.
+
+Idea
+Treat batch output as a fragment AST, not a full AST.
+
+Maybe the State/Progress store should have
+
+open_stack: nodes started but not yet closed
+node_table: all completed and in-progress nodes by id
+pending_edges: proves / dependencies whose targets may appear later or may not yet be loaded
+last_closed_node
+
+## Other Notes
+
+The current code works on n_lines as determining. We want n_tokens. Haiku may validly put a paragraph as one line, in markdown this is fine. Therefore the ParsingService logic should now be based upon
+
+There is a persistent memory.md in the State dir that Haiku can access across batches.
+It contains ideas like content structure to aim for, it may or may not read a TOC that provides hints.
+
+Each batch run should be able to view the last few lines of the previous clean.md before cutoff. Have this as a separate input as to not mess up our line number arithmetic above.
+
+The validation needs to be implemented. It is part of the Parsing service and can be invoked as a tool by Haiku/our model.
+
+We will also want to implement the final merge of the cleaned markdown files to get final.md. It should just be each clean.md with cutoff trimmed concatenated.
