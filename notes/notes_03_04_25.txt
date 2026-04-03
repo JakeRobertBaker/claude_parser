@@ -27,3 +27,5 @@ if not validation.valid
   ...
 
 Should we really be continuing after these?
+
+Should the validation tool that Haiku can talk to do these checks for us?

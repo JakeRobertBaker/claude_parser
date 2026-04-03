@@ -16,35 +16,52 @@ def main() -> None:
         description="Parse mathematics/science markdown into a structured tree.",
     )
     parser.add_argument(
-        "--raw", required=True,
+        "--raw",
+        required=True,
         help="Path to the raw MinerU-generated markdown file.",
     )
     parser.add_argument(
-        "--state", required=True,
+        "--state",
+        required=True,
         help="Path to the state directory (created if needed, git-tracked).",
     )
     parser.add_argument(
-        "--resume", action="store_true",
+        "--resume",
+        action="store_true",
         help="Resume from the last saved progress.",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print prompts without invoking Claude.",
     )
     parser.add_argument(
-        "--task-model", default="haiku",
+        "--task-model",
+        default="haiku",
         help="Model for batch processing (default: haiku).",
     )
     parser.add_argument(
-        "--batch-tokens", type=int, default=8000,
+        "--batch-tokens",
+        type=int,
+        default=8000,
         help="Approximate token budget per batch (default: 8000).",
     )
     parser.add_argument(
-        "--max-sections", type=int, default=None,
+        "--max-sections",
+        type=int,
+        default=None,
         help="Stop after N successful sections (useful for testing).",
     )
     parser.add_argument(
-        "--verbose", "-v", action="store_true",
+        "--timeout",
+        type=int,
+        default=600,
+        help="Timeout in seconds per LLM invocation (default: 600).",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
         help="Enable debug logging.",
     )
 
@@ -62,6 +79,7 @@ def main() -> None:
         state_dir=args.state,
         task_model=args.task_model,
         batch_tokens=args.batch_tokens,
+        timeout=args.timeout,
         dry_run=args.dry_run,
         resume=args.resume,
         max_sections=args.max_sections,

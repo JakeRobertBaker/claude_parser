@@ -1,0 +1,15 @@
+On 1 the memory.md let's leave that for now.
+
+On the coupling let's go for 1. for now. I do not like this but I think we should do the tools another time. If the tools use the state port that is wired by cli.py then as you say this is a whole other task for another day.
+
+On validation let's move to hard failure and expand validator_cli so that the last resport hopefully never fails.
+
+Carefully plan and implement this.
+
+After implementing changes do `uv run ty check src/ tests/`, `uv run ruff check src/ tests/`, uv run pytest tests/.
+
+Then do integration testing on a new run on `uv run python -m claude_parser.cli --raw raw/companion_to_analysis_mini.md --state ~/ai_tool_development/knowledge_prasing/attempt_states/new_attempt_i --max-sections 2`
+Be careful to get file paths correct and do not overwrite any old runs.
+Check if the run files look good, they usually reveal what is happening.
+You may want to compare with new_attempt_9 which appeared to go well.
+

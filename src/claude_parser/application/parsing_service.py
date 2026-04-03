@@ -1,5 +1,4 @@
 import logging
-import os
 
 from claude_parser.application.llm_response_parser import extract_json_from_stream
 from claude_parser.application.pipeline_state import PipelineState
@@ -32,15 +31,8 @@ class ParsingService:
         self.state = state
         self.vcs = vcs
 
-        self._clean_dir = os.path.join(config.state_dir, "clean")
-        self._raw_dir = os.path.join(config.state_dir, "raw")
-        self._logs_dir = os.path.join(config.state_dir, "logs")
-        self._failures_dir = os.path.join(config.state_dir, "failures")
-        self._memory_path = os.path.join(config.state_dir, "memory.md")
-
     def run(self) -> None:
-        for d in [self._clean_dir, self._raw_dir, self._logs_dir, self._failures_dir]:
-            os.makedirs(d, exist_ok=True)
+        self.state.init_dirs()
         self.vcs.init_repo()
 
         self._run_main_loop()
@@ -79,28 +71,27 @@ class ParsingService:
             start = pipeline_state.next_start_line
             end = self._compute_batch_end(raw_lines, start)
             chunk_id = f"chunk_{pipeline_state.next_chunk_id:03d}"
+            batch_num = pipeline_state.next_chunk_id
 
             logger.info(
                 "[%s] Processing raw lines %d–%d",
                 chunk_id, start + 1, end,
             )
 
-            # Write raw batch file (raw_i.md per notes spec)
-            batch_num = pipeline_state.next_chunk_id
-            raw_batch_path = os.path.join(self._raw_dir, f"raw_{batch_num}.md")
-            with open(raw_batch_path, "w", encoding="utf-8") as f:
-                f.writelines(raw_lines[start:end])
+            # Write raw batch file
+            batch_content = "".join(raw_lines[start:end])
+            self.state.write_raw_batch(batch_num, batch_content)
+            raw_batch_path = self.state.resolve_raw_path(batch_num)
 
             # Build context from previous clean file
-            context_text = self._get_context(pipeline_state)
+            context_text = self.state.get_context_lines(
+                batch_num, self.config.context_lines,
+            )
 
             # Read memory if exists
-            memory_text = ""
-            if os.path.exists(self._memory_path):
-                with open(self._memory_path, encoding="utf-8") as f:
-                    memory_text = f.read()
+            memory_text = self.state.read_memory()
 
-            clean_path = os.path.join(self._clean_dir, f"clean_{batch_num}.md")
+            clean_path = self.state.resolve_clean_path(batch_num)
             known_ids = list(tree_dict._data.keys())
 
             prompt = build_batch_prompt(
@@ -131,17 +122,15 @@ class ParsingService:
             )
 
             # Save log
-            log_path = os.path.join(self._logs_dir, f"{chunk_id}.json")
-            with open(log_path, "w", encoding="utf-8") as f:
-                f.write(result.stdout)
+            self.state.write_log(chunk_id, result.stdout)
 
             if not result.success:
-                logger.error("[%s] LLM invocation failed", chunk_id)
-                self._save_failure(chunk_id, result.stdout)
-                pipeline_state.next_start_line = end
-                pipeline_state.next_chunk_id += 1
-                self.state.save_state(pipeline_state)
-                continue
+                failure_content = result.stdout or f"stderr: {result.stderr}"
+                self.state.write_failure(chunk_id, failure_content)
+                raise RuntimeError(
+                    f"[{chunk_id}] LLM invocation failed. "
+                    f"See failures/{chunk_id}_raw_response.txt"
+                )
 
             # Parse LLM's JSON output for cutoff info
             metadata = extract_json_from_stream(result.stdout)
@@ -162,33 +151,29 @@ class ParsingService:
                     cutoff_raw_line = max(start + 1, min(cutoff_raw_line, end))
 
             # Read and parse the clean file
-            if not os.path.exists(clean_path):
-                logger.error("[%s] Clean file not written: %s", chunk_id, clean_path)
-                self._save_failure(chunk_id, result.stdout)
-                pipeline_state.next_start_line = end
-                pipeline_state.next_chunk_id += 1
-                self.state.save_state(pipeline_state)
-                continue
+            if not self.state.clean_batch_exists(batch_num):
+                self.state.write_failure(chunk_id, result.stdout)
+                raise RuntimeError(
+                    f"[{chunk_id}] Clean file not written by LLM: {clean_path}. "
+                    f"See failures/{chunk_id}_raw_response.txt"
+                )
 
-            with open(clean_path, encoding="utf-8") as f:
-                clean_text = f.read()
+            clean_text = self.state.read_clean_batch(batch_num)
+            assert clean_text is not None  # guarded by clean_batch_exists above
             clean_line_count = len(clean_text.splitlines())
 
             # Parse annotations
             events = parse_annotations(clean_text)
 
-            # Service-side validation
+            # Service-side validation (last-resort safety net)
             validation = validate_annotations(events, known_ids=set(known_ids))
             if not validation.valid:
-                logger.error(
-                    "[%s] Annotation validation failed: %s",
-                    chunk_id, validation.errors,
+                self.state.write_failure(chunk_id, result.stdout)
+                raise RuntimeError(
+                    f"[{chunk_id}] Service-side annotation validation failed: "
+                    f"{validation.errors}. "
+                    f"See failures/{chunk_id}_raw_response.txt"
                 )
-                self._save_failure(chunk_id, result.stdout)
-                pipeline_state.next_start_line = cutoff_raw_line
-                pipeline_state.next_chunk_id += 1
-                self.state.save_state(pipeline_state)
-                continue
 
             if validation.warnings:
                 for w in validation.warnings:
@@ -202,12 +187,11 @@ class ParsingService:
                     chunk_number, clean_line_count,
                 )
             except (ValueError, KeyError) as e:
-                logger.error("[%s] Tree building failed: %s", chunk_id, e)
-                self._save_failure(chunk_id, result.stdout)
-                pipeline_state.next_start_line = cutoff_raw_line
-                pipeline_state.next_chunk_id += 1
-                self.state.save_state(pipeline_state)
-                continue
+                self.state.write_failure(chunk_id, result.stdout)
+                raise RuntimeError(
+                    f"[{chunk_id}] Tree building failed: {e}. "
+                    f"See failures/{chunk_id}_raw_response.txt"
+                ) from e
 
             if root is None and tree_dict.root_node is not None:
                 root = tree_dict.root_node
@@ -243,61 +227,15 @@ class ParsingService:
                 return i + 1
         return len(raw_lines)
 
-    def _get_context(self, state: PipelineState) -> str:
-        """Get last N lines from previous clean file as context."""
-        if state.next_chunk_id == 0:
-            return ""
-        prev_num = state.next_chunk_id - 1
-        prev_clean_path = os.path.join(self._clean_dir, f"clean_{prev_num}.md")
-        if not os.path.exists(prev_clean_path):
-            return ""
-
-        with open(prev_clean_path, encoding="utf-8") as f:
-            lines = f.readlines()
-
-        # Find cutoff line in previous file
-        cutoff_idx = len(lines)
-        for i, line in enumerate(lines):
-            if "<!-- cutoff -->" in line:
-                cutoff_idx = i
-                break
-
-        # Take last N lines before cutoff
-        n = self.config.context_lines
-        context_start = max(0, cutoff_idx - n)
-        context_lines = lines[context_start:cutoff_idx]
-        return "".join(context_lines)
-
     def _final_merge(self) -> None:
         """Concatenate all clean files (before cutoff) into final.md."""
-        clean_files = sorted(
-            f for f in os.listdir(self._clean_dir) if f.endswith(".md")
-        )
-        if not clean_files:
+        content = self.state.read_all_clean_before_cutoff()
+        if not content:
             logger.info("No clean files to merge.")
             return
-
-        final_path = os.path.join(self.config.state_dir, "final.md")
-        with open(final_path, "w", encoding="utf-8") as out:
-            for clean_file in clean_files:
-                chunk_path = os.path.join(self._clean_dir, clean_file)
-                with open(chunk_path, encoding="utf-8") as f:
-                    lines = f.readlines()
-
-                # Find cutoff and write only lines before it
-                for i, line in enumerate(lines):
-                    if "<!-- cutoff -->" in line:
-                        break
-                    out.write(line)
-
-        logger.info("Final merge complete: %s (%d files)", final_path, len(clean_files))
+        self.state.write_final(content)
+        logger.info("Final merge complete.")
 
     def _read_raw_lines(self) -> list[str]:
         with open(self.config.raw_path, encoding="utf-8") as f:
             return f.readlines()
-
-    def _save_failure(self, label: str, content: str) -> None:
-        path = os.path.join(self._failures_dir, f"{label}_raw_response.txt")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.debug("Saved failure log to %s", path)
