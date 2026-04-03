@@ -1,0 +1,29 @@
+# Concerns
+
+## 1
+Is memory.md used in the state?
+
+## 2
+Have we coupled the domain with the state port and adapter?
+
+Are we coupled in two places?
+
+The parsing_service.py loop talks to the StatePort and manually makes files. Is that an issue?
+
+Even of we did address this we would need the claude model/agent to be able to access that Port and read and write files.
+
+Currently our model/agent uses standard bash file read write because we assume that the StatePort is that file implemtation.
+
+## 3
+Is it right that we have continue if result is not success? Maybe the pattern should be that the validator that our agent talks to in it's session before it ends does a lot to make sure things are fine and the haiku model can rectify any mistakes. Then we would want if result.success is False we probably do not want to continue?
+
+I think we need to carefully consider all of the validation parts,
+
+if not result.success
+  ...
+if not os.path.exists(path=clean_path)
+  ...
+if not validation.valid
+  ...
+
+Should we really be continuing after these?
