@@ -1,3 +1,4 @@
+from claude_parser.application.tokens import approximate_claude_tokens
 import logging
 
 from claude_parser.application.llm_response_parser import extract_json_from_stream
@@ -56,7 +57,8 @@ class ParsingService:
 
         logger.info(
             "Starting main loop at line %d of %d",
-            pipeline_state.next_start_line, total_lines,
+            pipeline_state.next_start_line,
+            total_lines,
         )
 
         sections_completed = 0
@@ -65,7 +67,9 @@ class ParsingService:
                 self.config.max_sections is not None
                 and sections_completed >= self.config.max_sections
             ):
-                logger.info("Reached max_sections limit (%d).", self.config.max_sections)
+                logger.info(
+                    "Reached max_sections limit (%d).", self.config.max_sections
+                )
                 break
 
             start = pipeline_state.next_start_line
@@ -75,7 +79,9 @@ class ParsingService:
 
             logger.info(
                 "[%s] Processing raw lines %d–%d",
-                chunk_id, start + 1, end,
+                chunk_id,
+                start + 1,
+                end,
             )
 
             # Write raw batch file
@@ -85,7 +91,8 @@ class ParsingService:
 
             # Build context from previous clean file
             context_text = self.state.get_context_lines(
-                batch_num, self.config.context_lines,
+                batch_num,
+                self.config.context_lines,
             )
 
             # Read memory if exists
@@ -143,7 +150,10 @@ class ParsingService:
                         cutoff_raw_line = start + reported
                         logger.warning(
                             "[%s] cutoff %d < batch start %d, treating as batch-relative → %d",
-                            chunk_id, reported, start, cutoff_raw_line,
+                            chunk_id,
+                            reported,
+                            start,
+                            cutoff_raw_line,
                         )
                     else:
                         cutoff_raw_line = reported
@@ -183,8 +193,11 @@ class ParsingService:
             chunk_number = pipeline_state.next_chunk_id
             try:
                 fragment = process_batch_annotations(
-                    events, tree_dict, pipeline_state.open_stack,
-                    chunk_number, clean_line_count,
+                    events,
+                    tree_dict,
+                    pipeline_state.open_stack,
+                    chunk_number,
+                    clean_line_count,
                 )
             except (ValueError, KeyError) as e:
                 self.state.write_failure(chunk_id, result.stdout)
@@ -211,19 +224,31 @@ class ParsingService:
 
             logger.info(
                 "[%s] Done. new=%d closed=%d open=%d cutoff=%d",
-                chunk_id, len(fragment.new_nodes), len(fragment.closed_nodes),
-                len(fragment.open_stack), cutoff_raw_line,
+                chunk_id,
+                len(fragment.new_nodes),
+                len(fragment.closed_nodes),
+                len(fragment.open_stack),
+                cutoff_raw_line,
             )
 
         logger.info("Main loop complete.")
 
-    def _compute_batch_end(self, raw_lines: list[str], start: int) -> int:
+    def _old_compute_batch_end(self, raw_lines: list[str], start: int) -> int:
         """Walk lines from start, estimating ~4 chars/token, return end index."""
         char_budget = self.config.batch_tokens * _CHARS_PER_TOKEN
         chars = 0
         for i in range(start, len(raw_lines)):
             chars += len(raw_lines[i])
             if chars >= char_budget:
+                return i + 1
+        return len(raw_lines)
+
+    def _compute_batch_end(self, raw_lines: list[str], start: int) -> int:
+        tokens = 0
+        raw_lines
+        for i in range(start, len(raw_lines)):
+            tokens += approximate_claude_tokens(raw_lines[i])
+            if tokens >= self.config.batch_tokens:
                 return i + 1
         return len(raw_lines)
 
