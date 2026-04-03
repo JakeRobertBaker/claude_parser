@@ -1,35 +1,22 @@
-import json
 import logging
 import os
 
 from claude_parser.application.llm_response_parser import extract_json_from_stream
-from claude_parser.application.merge import (
-    build_dependency_report,
-    check_intra_duplicates,
-    merge_chunk,
-    validate_chunk_file,
-    validate_metadata,
-)
-from claude_parser.application.progress import ProgressState
-from claude_parser.application.prompt_builder import (
-    build_phase0_prompt,
-    build_retry_prompt,
-    build_section_prompt,
-)
-from claude_parser.application.serialization import tree_from_dict, tree_to_dict
+from claude_parser.application.pipeline_state import PipelineState
+from claude_parser.application.prompt_builder import build_batch_prompt
 from claude_parser.config import ParserConfig
-from claude_parser.domain.node import Node, TreeDict
+from claude_parser.domain.annotation_parser import parse_annotations
+from claude_parser.domain.annotation_tree_builder import process_batch_annotations
+from claude_parser.domain.node import TreeDict
+from claude_parser.domain.validator import validate_annotations
 from claude_parser.ports.llm import LLMPort
-from claude_parser.ports.progress_store import ProgressStorePort
-from claude_parser.ports.tree_repository import TreeRepositoryPort
+from claude_parser.ports.state import StatePort
 from claude_parser.ports.vcs import VCSPort
 
 logger = logging.getLogger(__name__)
 
-# Phase 0 only prints JSON — no tool calls needed.
-_PHASE0_TOOLS: list[str] = []
-# Section processing needs Write to create the chunk .md file.
-_SECTION_TOOLS = ["Write"]
+_BATCH_TOOLS = ["Write", "Bash"]
+_CHARS_PER_TOKEN = 4
 
 
 class ParsingService:
@@ -37,347 +24,260 @@ class ParsingService:
         self,
         config: ParserConfig,
         llm: LLMPort,
-        tree_repo: TreeRepositoryPort,
-        progress_store: ProgressStorePort,
+        state: StatePort,
         vcs: VCSPort,
     ):
         self.config = config
         self.llm = llm
-        self.tree_repo = tree_repo
-        self.progress_store = progress_store
+        self.state = state
         self.vcs = vcs
 
         self._chunks_dir = os.path.join(config.state_dir, "chunks")
+        self._raw_dir = os.path.join(config.state_dir, "raw_batches")
         self._logs_dir = os.path.join(config.state_dir, "logs")
         self._failures_dir = os.path.join(config.state_dir, "failures")
+        self._memory_path = os.path.join(config.state_dir, "memory.md")
 
     def run(self) -> None:
-        for d in [self._chunks_dir, self._logs_dir, self._failures_dir]:
+        for d in [self._chunks_dir, self._raw_dir, self._logs_dir, self._failures_dir]:
             os.makedirs(d, exist_ok=True)
         self.vcs.init_repo()
 
-        if not self.config.resume:
-            self._run_phase0()
         self._run_main_loop()
-
-        result = self.tree_repo.load()
-        if result:
-            root, tree_dict = result
-            report = build_dependency_report(tree_dict)
-            report_path = os.path.join(self.config.state_dir, "dependency_report.json")
-            with open(report_path, "w", encoding="utf-8") as f:
-                json.dump(report, f, indent=2)
-            logger.info("Dependency report saved to %s", report_path)
-
-    def _run_phase0(self) -> None:
-        logger.info("Phase 0: Analyzing front matter...")
-        raw_lines = self._read_raw_lines()
-        raw_content = "".join(raw_lines[:500])
-        prompt = build_phase0_prompt(raw_content, self.config)
-
-        if self.config.dry_run:
-            logger.info("DRY RUN — Phase 0 prompt:\n%s", prompt)
-            return
-
-        result = self.llm.invoke(
-            prompt=prompt,
-            model=self.config.phase0_model,
-            allowed_tools=_PHASE0_TOOLS,
-            add_dirs=[],
-            timeout=self.config.timeout,
-        )
-
-        if not result.success:
-            logger.error("Phase 0 failed: %s", result.stderr[:200])
-            raise RuntimeError("Phase 0: Claude invocation failed")
-
-        metadata = extract_json_from_stream(result.stdout)
-        if metadata is None:
-            self._save_failure("phase0", result.stdout)
-            raise RuntimeError("Phase 0: Could not parse JSON from output")
-
-        if "hierarchy" not in metadata:
-            self._save_failure("phase0", result.stdout)
-            raise RuntimeError("Phase 0: Missing 'hierarchy' in output")
-
-        root, tree_dict = tree_from_dict(metadata["hierarchy"])
-
-        self.tree_repo.save(root)
-        progress = ProgressState(
-            next_start_line=0,
-            next_chunk_id=0,
-            section_index=0,
-        )
-        self.progress_store.save_progress(progress)
-        self.vcs.commit_all("Phase 0: skeleton hierarchy")
-        logger.info("Phase 0 complete. %d skeleton nodes.", len(tree_dict))
+        self._final_merge()
 
     def _run_main_loop(self) -> None:
         raw_lines = self._read_raw_lines()
-
-        progress = self.progress_store.load_progress()
-        if progress is None:
-            raise RuntimeError("No progress state found. Run without --resume first.")
-
-        result = self.tree_repo.load()
-        if result is None:
-            raise RuntimeError("No tree state found. Run without --resume first.")
-        root, tree_dict = result
-
         total_lines = len(raw_lines)
+
+        # Load or initialize state
+        pipeline_state = self.state.load_state() if self.config.resume else None
+        if pipeline_state is None:
+            pipeline_state = PipelineState(next_start_line=0, next_chunk_id=0)
+
+        tree_result = self.state.load_tree() if self.config.resume else None
+        if tree_result is not None:
+            root, tree_dict = tree_result
+        else:
+            tree_dict = TreeDict()
+            root = None
+
         logger.info(
             "Starting main loop at line %d of %d",
-            progress.next_start_line, total_lines,
+            pipeline_state.next_start_line, total_lines,
         )
 
         sections_completed = 0
-        while progress.next_start_line < total_lines:
+        while pipeline_state.next_start_line < total_lines:
             if (
                 self.config.max_sections is not None
                 and sections_completed >= self.config.max_sections
             ):
-                logger.info(
-                    "Reached max_sections limit (%d). Stopping early.",
-                    self.config.max_sections,
-                )
+                logger.info("Reached max_sections limit (%d).", self.config.max_sections)
                 break
 
-            start = progress.next_start_line
-            end = min(start + self.config.section_stride, total_lines)
-            chunk_id_str = f"chunk_{progress.next_chunk_id:03d}"
-
-            overlap_text = ""
-            if start > 0 and self.config.overlap_lines > 0:
-                overlap_start = max(0, start - self.config.overlap_lines)
-                overlap_text = "".join(raw_lines[overlap_start:start])
+            start = pipeline_state.next_start_line
+            end = self._compute_batch_end(raw_lines, start)
+            chunk_id = f"chunk_{pipeline_state.next_chunk_id:03d}"
 
             logger.info(
-                "[Section %d] Processing lines %d-%d as %s",
-                progress.section_index, start + 1, end, chunk_id_str,
+                "[%s] Processing raw lines %d–%d",
+                chunk_id, start + 1, end,
+            )
+
+            # Write raw batch file
+            raw_batch_path = os.path.join(self._raw_dir, f"{chunk_id}_raw.md")
+            with open(raw_batch_path, "w", encoding="utf-8") as f:
+                f.writelines(raw_lines[start:end])
+
+            # Build context from previous clean file
+            context_text = self._get_context(pipeline_state)
+
+            # Read memory if exists
+            memory_text = ""
+            if os.path.exists(self._memory_path):
+                with open(self._memory_path, encoding="utf-8") as f:
+                    memory_text = f.read()
+
+            clean_path = os.path.join(self._chunks_dir, f"{chunk_id}.md")
+            known_ids = list(tree_dict._data.keys())
+
+            prompt = build_batch_prompt(
+                raw_path=raw_batch_path,
+                clean_path=clean_path,
+                chunk_id=chunk_id,
+                raw_start=start + 1,
+                raw_end=end,
+                raw_line_count=end - start,
+                open_stack=pipeline_state.open_stack,
+                context_text=context_text,
+                memory_text=memory_text,
+                known_ids=known_ids,
+                config=self.config,
             )
 
             if self.config.dry_run:
-                tree_json = json.dumps(tree_to_dict(root), indent=2)
-                window_content = "".join(raw_lines[start:end])
-                chunk_path = os.path.join(
-                    self._chunks_dir, f"{chunk_id_str}.md",
-                )
-                prompt = build_section_prompt(
-                    window_content, start, end, chunk_id_str,
-                    overlap_text, tree_json, chunk_path,
-                    self.config,
-                )
-                logger.info("DRY RUN — Section prompt:\n%s", prompt[:500])
+                logger.info("DRY RUN — Batch prompt:\n%s", prompt[:500])
                 break
 
-            metadata = self._process_section(
-                raw_lines, start, end, chunk_id_str,
-                overlap_text, root, tree_dict,
-            )
-
-            if metadata is not None:
-                try:
-                    chunk_number = progress.next_chunk_id
-                    merge_chunk(tree_dict, root, metadata, chunk_number)
-                except (ValueError, KeyError) as e:
-                    logger.error(
-                        "[Section %d] Merge failed: %s", progress.section_index, e,
-                    )
-                    self._save_failure(
-                        f"section_{progress.section_index:03d}",
-                        json.dumps(metadata, indent=2),
-                    )
-                    cutoff = metadata.get("cutoff_line", end)
-                    progress.next_start_line = cutoff
-                    progress.section_index += 1
-                    self.progress_store.save_progress(progress)
-                    continue
-
-                cutoff = metadata.get("cutoff_line", end)
-                progress.next_start_line = cutoff
-                progress.next_chunk_id += 1
-                progress.section_index += 1
-
-                self.tree_repo.save(root)
-                self.progress_store.save_progress(progress)
-                self.vcs.commit_all(f"{chunk_id_str}")
-                sections_completed += 1
-                logger.info("[Section %d] Committed %s", progress.section_index - 1, chunk_id_str)
-            else:
-                logger.warning(
-                    "[Section %d] Failed, advancing past stride",
-                    progress.section_index,
-                )
-                progress.next_start_line = end
-                progress.section_index += 1
-                self.progress_store.save_progress(progress)
-
-        logger.info("Main loop complete.")
-
-    def _write_window(
-        self, raw_lines: list[str], start: int, end: int, chunk_id: str,
-    ) -> str:
-        """Write window to disk for debug logging (not used in the prompt)."""
-        window_path = os.path.join(self.config.state_dir, f"current_window_{chunk_id}.md")
-        with open(window_path, "w", encoding="utf-8") as f:
-            f.writelines(raw_lines[start:end])
-        return window_path
-
-    def _process_section(
-        self,
-        raw_lines: list[str],
-        start: int,
-        end: int,
-        chunk_id: str,
-        overlap_text: str,
-        root: Node,
-        tree_dict: TreeDict,
-    ) -> dict | None:
-        # Write window to disk for debugging
-        self._write_window(raw_lines, start, end, chunk_id)
-
-        window_content = "".join(raw_lines[start:end])
-        tree_json = json.dumps(tree_to_dict(root), indent=2)
-        chunk_path = os.path.join(self._chunks_dir, f"{chunk_id}.md")
-        prompt = build_section_prompt(
-            window_content, start, end, chunk_id,
-            overlap_text, tree_json, chunk_path,
-            self.config,
-        )
-
-        result = self.llm.invoke(
-            prompt=prompt,
-            model=self.config.task_model,
-            allowed_tools=_SECTION_TOOLS,
-            add_dirs=[self.config.state_dir],
-            timeout=self.config.timeout,
-        )
-
-        log_path = os.path.join(
-            self._logs_dir, f"{chunk_id}.json",
-        )
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write(result.stdout)
-
-        if not result.success:
-            logger.error("Claude invocation failed for %s", chunk_id)
-            return None
-
-        metadata = extract_json_from_stream(result.stdout)
-        if metadata is None:
-            logger.error("Could not parse JSON for %s", chunk_id)
-            self._save_failure(chunk_id, result.stdout)
-            return None
-
-        error = validate_metadata(metadata)
-        if error:
-            logger.error("Invalid metadata for %s: %s", chunk_id, error)
-            self._save_failure(chunk_id, result.stdout)
-            return None
-
-        # Check for duplicate IDs within the output — retry once with correction
-        duplicates = check_intra_duplicates(metadata)
-        if duplicates:
-            logger.warning(
-                "Intra-duplicate IDs %s for %s, retrying...", duplicates, chunk_id,
-            )
-            retry_prompt = build_retry_prompt(prompt, duplicates)
+            # Invoke Haiku
             result = self.llm.invoke(
-                prompt=retry_prompt,
+                prompt=prompt,
                 model=self.config.task_model,
-                allowed_tools=_SECTION_TOOLS,
+                allowed_tools=_BATCH_TOOLS,
                 add_dirs=[self.config.state_dir],
                 timeout=self.config.timeout,
             )
 
+            # Save log
+            log_path = os.path.join(self._logs_dir, f"{chunk_id}.json")
+            with open(log_path, "w", encoding="utf-8") as f:
+                f.write(result.stdout)
+
             if not result.success:
-                logger.error("Retry failed for %s", chunk_id)
-                return None
+                logger.error("[%s] LLM invocation failed", chunk_id)
+                self._save_failure(chunk_id, result.stdout)
+                pipeline_state.next_start_line = end
+                pipeline_state.next_chunk_id += 1
+                self.state.save_state(pipeline_state)
+                continue
 
+            # Parse LLM's JSON output for cutoff info
             metadata = extract_json_from_stream(result.stdout)
-            if metadata is None:
-                logger.error("Retry: could not parse JSON for %s", chunk_id)
-                return None
+            cutoff_raw_line = end  # default: processed everything
+            if metadata and "cutoff_raw_line" in metadata:
+                cutoff_raw_line = metadata["cutoff_raw_line"]
 
-            error = validate_metadata(metadata)
-            if error:
-                logger.error("Retry: invalid metadata for %s: %s", chunk_id, error)
-                return None
+            # Read and parse the clean file
+            if not os.path.exists(clean_path):
+                logger.error("[%s] Clean file not written: %s", chunk_id, clean_path)
+                self._save_failure(chunk_id, result.stdout)
+                pipeline_state.next_start_line = end
+                pipeline_state.next_chunk_id += 1
+                self.state.save_state(pipeline_state)
+                continue
 
-            still_dupes = check_intra_duplicates(metadata)
-            if still_dupes:
+            with open(clean_path, encoding="utf-8") as f:
+                clean_text = f.read()
+            clean_line_count = len(clean_text.splitlines())
+
+            # Parse annotations
+            events = parse_annotations(clean_text)
+
+            # Service-side validation
+            validation = validate_annotations(events, known_ids=set(known_ids))
+            if not validation.valid:
                 logger.error(
-                    "Retry still has duplicate IDs %s for %s", still_dupes, chunk_id,
+                    "[%s] Annotation validation failed: %s",
+                    chunk_id, validation.errors,
                 )
-                return None
+                self._save_failure(chunk_id, result.stdout)
+                pipeline_state.next_start_line = cutoff_raw_line
+                pipeline_state.next_chunk_id += 1
+                self.state.save_state(pipeline_state)
+                continue
 
-        # Validate that chunk file matches metadata
-        chunk_error = validate_chunk_file(metadata, chunk_path, start + 1, end)
-        if chunk_error:
-            logger.error("Chunk validation failed for %s: %s", chunk_id, chunk_error)
-            self._save_failure(chunk_id, result.stdout)
-            return None
+            if validation.warnings:
+                for w in validation.warnings:
+                    logger.warning("[%s] %s", chunk_id, w)
 
-        # Diagnostic logging
-        self._log_chunk_diagnostics(chunk_id, metadata, chunk_path, start, end)
+            # Build/extend tree
+            chunk_number = pipeline_state.next_chunk_id
+            try:
+                fragment = process_batch_annotations(
+                    events, tree_dict, pipeline_state.open_stack,
+                    chunk_number, clean_line_count,
+                )
+            except (ValueError, KeyError) as e:
+                logger.error("[%s] Tree building failed: %s", chunk_id, e)
+                self._save_failure(chunk_id, result.stdout)
+                pipeline_state.next_start_line = cutoff_raw_line
+                pipeline_state.next_chunk_id += 1
+                self.state.save_state(pipeline_state)
+                continue
 
-        return metadata
+            if root is None and tree_dict.root_node is not None:
+                root = tree_dict.root_node
 
-    def _log_chunk_diagnostics(
-        self,
-        chunk_id: str,
-        metadata: dict,
-        chunk_path: str,
-        start: int,
-        end: int,
-    ) -> None:
-        """Log diagnostic info about a processed chunk for debugging."""
-        cutoff = metadata.get("cutoff_line", end)
-        nodes = metadata.get("nodes", [])
-        node_count = len(nodes)
+            # Update state
+            pipeline_state.next_start_line = cutoff_raw_line
+            pipeline_state.next_chunk_id += 1
+            pipeline_state.open_stack = fragment.open_stack
+            pipeline_state.last_closed_node_id = fragment.last_closed_node_id
 
-        # Count actual lines in chunk file
-        try:
-            with open(chunk_path, encoding="utf-8") as f:
-                actual_lines = sum(1 for _ in f)
-        except FileNotFoundError:
-            actual_lines = 0
+            # Save and commit
+            self.state.save_state(pipeline_state)
+            if root is not None:
+                self.state.save_tree(root)
+            self.vcs.commit_all(chunk_id)
+            sections_completed += 1
 
-        # Find content line range from metadata
-        min_line = float("inf")
-        max_line = 0
-        for node_data in nodes:
-            for content in node_data.get("content", []):
-                first = content.get("first_line", 0)
-                last = content.get("last_line", 0)
-                if first < min_line:
-                    min_line = first
-                if last > max_line:
-                    max_line = last
-
-        raw_covered = cutoff - (start + 1) + 1
-
-        logger.info(
-            "[%s] cutoff=%d, raw_covered=%d, chunk_lines=%d, "
-            "metadata_lines=%d-%d, nodes=%d",
-            chunk_id, cutoff, raw_covered, actual_lines,
-            min_line if min_line != float("inf") else 0,
-            max_line, node_count,
-        )
-
-        # Log per-node summary
-        for node_data in nodes:
-            node_id = node_data.get("id", "?")
-            content_ranges = [
-                f"{c['first_line']}-{c['last_line']}"
-                for c in node_data.get("content", [])
-            ]
-            logger.debug(
-                "[%s]   node=%s type=%s content=%s",
-                chunk_id, node_id,
-                node_data.get("node_type", "existing"),
-                ", ".join(content_ranges) if content_ranges else "none",
+            logger.info(
+                "[%s] Done. new=%d closed=%d open=%d cutoff=%d",
+                chunk_id, len(fragment.new_nodes), len(fragment.closed_nodes),
+                len(fragment.open_stack), cutoff_raw_line,
             )
+
+        logger.info("Main loop complete.")
+
+    def _compute_batch_end(self, raw_lines: list[str], start: int) -> int:
+        """Walk lines from start, estimating ~4 chars/token, return end index."""
+        char_budget = self.config.batch_tokens * _CHARS_PER_TOKEN
+        chars = 0
+        for i in range(start, len(raw_lines)):
+            chars += len(raw_lines[i])
+            if chars >= char_budget:
+                return i + 1
+        return len(raw_lines)
+
+    def _get_context(self, state: PipelineState) -> str:
+        """Get last N lines from previous clean file as context."""
+        if state.next_chunk_id == 0:
+            return ""
+        prev_chunk_id = f"chunk_{state.next_chunk_id - 1:03d}"
+        prev_clean_path = os.path.join(self._chunks_dir, f"{prev_chunk_id}.md")
+        if not os.path.exists(prev_clean_path):
+            return ""
+
+        with open(prev_clean_path, encoding="utf-8") as f:
+            lines = f.readlines()
+
+        # Find cutoff line in previous file
+        cutoff_idx = len(lines)
+        for i, line in enumerate(lines):
+            if "<!-- cutoff -->" in line:
+                cutoff_idx = i
+                break
+
+        # Take last N lines before cutoff
+        n = self.config.context_lines
+        context_start = max(0, cutoff_idx - n)
+        context_lines = lines[context_start:cutoff_idx]
+        return "".join(context_lines)
+
+    def _final_merge(self) -> None:
+        """Concatenate all clean chunks (before cutoff) into final.md."""
+        chunks = sorted(
+            f for f in os.listdir(self._chunks_dir) if f.endswith(".md")
+        )
+        if not chunks:
+            logger.info("No chunks to merge.")
+            return
+
+        final_path = os.path.join(self.config.state_dir, "final.md")
+        with open(final_path, "w", encoding="utf-8") as out:
+            for chunk_file in chunks:
+                chunk_path = os.path.join(self._chunks_dir, chunk_file)
+                with open(chunk_path, encoding="utf-8") as f:
+                    lines = f.readlines()
+
+                # Find cutoff and write only lines before it
+                for i, line in enumerate(lines):
+                    if "<!-- cutoff -->" in line:
+                        break
+                    out.write(line)
+
+        logger.info("Final merge complete: %s (%d chunks)", final_path, len(chunks))
 
     def _read_raw_lines(self) -> list[str]:
         with open(self.config.raw_path, encoding="utf-8") as f:

@@ -11,14 +11,20 @@ class NodeType(StrEnum):
     THM = "theorem"
     LEM = "lemma"
     PROP = "proposition"
+    COR = "corollary"
     REM = "remark"
     EXC = "exercise"
     EG = "example"
     PRF = "proof"
+    AXIOM = "axiom"
 
 
-ProveableTypes = [NodeType.THM, NodeType.LEM, NodeType.PROP, NodeType.PRF]
-TheoryTypes = [NodeType.DEF] + ProveableTypes
+ProveableTargetTypes = [NodeType.THM, NodeType.LEM, NodeType.PROP, NodeType.COR]
+SemanticTypes = [
+    NodeType.DEF, NodeType.THM, NodeType.LEM, NodeType.PROP,
+    NodeType.COR, NodeType.PRF, NodeType.REM, NodeType.EG,
+    NodeType.EXC, NodeType.AXIOM,
+]
 
 
 class TreeDict(Mapping):
@@ -96,6 +102,11 @@ class Node:
         self._proves_id = proves_id
         self.parent = None
 
+        if self._proves_id is not None and self.node_type != NodeType.PRF:
+            raise ValueError(
+                f"Node '{self.id}' has proves_id but is not a proof node."
+            )
+
         if parent:
             self._assign_parent(parent)
 
@@ -157,7 +168,7 @@ class Node:
 
     @property
     def theory(self) -> bool:
-        return self.node_type in TheoryTypes
+        return self.node_type in SemanticTypes
 
     @property
     def proves(self) -> Node | None:

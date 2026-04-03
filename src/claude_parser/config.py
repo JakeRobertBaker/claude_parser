@@ -6,9 +6,8 @@ class ParserConfig:
     raw_path: str
     state_dir: str
     task_model: str = "haiku"
-    phase0_model: str = "haiku"
-    section_stride: int = 450
-    overlap_lines: int = 15
+    batch_tokens: int = 8000
+    context_lines: int = 20
     timeout: int = 300
     dry_run: bool = False
     resume: bool = False

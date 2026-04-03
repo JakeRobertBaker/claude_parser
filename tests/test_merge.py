@@ -18,7 +18,6 @@ def make_node(
     node_dict: TreeDict,
     content_list: list[Content] | None = None,
     children: list[Node] | None = None,
-    theory: bool = False,
     node_type: NodeType = NodeType.GENERIC,
     dependency_ids: list[str] | None = None,
 ) -> Node:
@@ -28,7 +27,6 @@ def make_node(
         children=children or [],
         content_list=content_list or [],
         node_type=node_type,
-        theory=theory,
         node_dict=node_dict,
         dependency_ids=dependency_ids,
     )
@@ -262,9 +260,9 @@ class TestDependencyReport:
         td = make_tree_dict()
         root = make_node("root", td)
         td.set_root(root)
-        make_node("def:a", td, theory=True, node_type=NodeType.DEF)
+        make_node("def:a", td, node_type=NodeType.DEF)
         make_node(
-            "thm:b", td, theory=True, node_type=NodeType.THM,
+            "thm:b", td, node_type=NodeType.THM,
             dependency_ids=["def:a"],
         )
         report = build_dependency_report(td)
@@ -275,7 +273,7 @@ class TestDependencyReport:
         root = make_node("root", td)
         td.set_root(root)
         make_node(
-            "thm:b", td, theory=True, node_type=NodeType.THM,
+            "thm:b", td, node_type=NodeType.THM,
             dependency_ids=["def:missing"],
         )
         report = build_dependency_report(td)
@@ -286,6 +284,6 @@ class TestDependencyReport:
         td = make_tree_dict()
         root = make_node("root", td)
         td.set_root(root)
-        make_node("def:a", td, theory=True, node_type=NodeType.DEF)
+        make_node("def:a", td, node_type=NodeType.DEF)
         report = build_dependency_report(td)
         assert "def:a" in report["theory_nodes_with_zero_dependencies"]

@@ -42,9 +42,9 @@ def node_from_dict(
         children=children,
         content_list=[content_deserializer(c) for c in node_dict.get("content", [])],
         node_type=NodeType(node_dict.get("node_type", "generic")),
-        theory=node_dict.get("theory", False),
         node_dict=node_registry,
         dependency_ids=node_dict.get("dependencies", []),
+        proves_id=node_dict.get("proves_id"),
     )
 
     return node
@@ -62,8 +62,8 @@ def node_to_dict(
         result["content"] = [content_serializer(c) for c in node.content_list]
     if node.node_type != NodeType.GENERIC:
         result["node_type"] = node.node_type.value
-    if node.theory:
-        result["theory"] = True
+    if node._proves_id:
+        result["proves_id"] = node._proves_id
     if node._dependency_ids:
         result["dependencies"] = node._dependency_ids
     if node.children:

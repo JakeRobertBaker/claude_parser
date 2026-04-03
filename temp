@@ -1,6 +1,6 @@
 This project aims to use Haiku loops to clean parse a markdown file and add structure. We do not have API access hence `claude -p`.
 
-Read and understand our next stage @snotes/notes_02_04_26.txt. 
+Read and understand our next stage @notes/notes_02_04_26.txt. 
 
 Plan and implement the following. Make sure to understand the current state of the codebase.
 
@@ -10,5 +10,7 @@ Plan and implement the following. Make sure to understand the current state of t
 After each implement stage do `uv run ruff check src/ tests/`, `uv run ty check src/ tests/`, `uv run pytest tests/`.
 
 During 2. I think there is a design question of whether we want to unify the ProgressState, VCS and Tree repo into one object. Fundamentally this is the current state object. We want the elegant design for our aims.
+
+CLAUDE.md and architecture.md summarise the codebase. Once we have final changes we may need to update them.
 
 Finally, we will want to try a small run on @raw/companion_to_analysis_mini.md to see if things are working.

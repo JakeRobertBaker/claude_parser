@@ -145,7 +145,6 @@ def merge_chunk(
             parent_node = tree_dict[parent_id]
 
             node_type = NodeType(node_data.get("node_type", "generic"))
-            is_theory = node_type != NodeType.GENERIC
 
             content_list = [
                 Content(
@@ -162,9 +161,9 @@ def merge_chunk(
                 children=[],
                 content_list=content_list,
                 node_type=node_type,
-                theory=is_theory,
                 node_dict=tree_dict,
                 dependency_ids=node_data.get("dependencies", []),
+                proves_id=node_data.get("proves_id"),
             )
             parent_node.add_child(new_node)
             logger.info("Created node '%s' under '%s'", node_data["id"], parent_id)

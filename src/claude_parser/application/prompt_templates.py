@@ -1,56 +1,16 @@
-"""Prompt templates for the textbook parsing pipeline.
-
-Edit these templates to change what Haiku sees. All inputs (skill instructions,
-window content, tree state) are inlined — Haiku's only tool call is Write for
-the chunk file.
+"""Prompt templates for the annotation-based parsing pipeline.
 
 Templates use str.format() — literal braces must be doubled: {{ and }}.
 """
 
-PHASE0_TEMPLATE = """\
-You are a task agent analyzing the front matter of a mathematics textbook.
-
-## Instructions
-
-Below are the first {line_count} lines of a raw markdown file produced by MinerU.
-Identify the Table of Contents (if present) and parse it into a hierarchy tree \
-of skeleton nodes. If no ToC is found, return an empty hierarchy.
-
-Print ONLY the JSON below to stdout — no other text, no markdown fences.
-
-## Output format
-
-{{
-  "hierarchy": {{
-    "id": "root",
-    "title": "Root",
-    "children": [
-      {{
-        "id": "ch01",
-        "title": "Chapter Title",
-        "children": [
-          {{"id": "sec01_01", "title": "Section Title", "children": []}}
-        ]
-      }}
-    ]
-  }}
-}}
-
-## Rules
-- Use chapter/section numbering from the textbook (ch01, sec01_01, etc.)
-- Do NOT include any content fields — these are skeleton nodes only.
-- stdout must contain ONLY the JSON.
-
-## Raw file (first {line_count} lines)
-{raw_content}
-"""
-
-SECTION_TEMPLATE = """\
-You are a task agent cleaning textbook markdown and producing structured metadata.
+ANNOTATION_BATCH_TEMPLATE = """\
+You are a task agent cleaning raw OCR markdown and annotating document structure.
 
 ## Task
-Clean the raw text in the window below and assign every piece of content to a \
-node in the tree.
+
+Clean the raw text in {raw_path} and write an annotated version to {clean_path}.
+The annotated file must contain cleaned markdown with inline tree structure \
+comments.
 
 ## Cleaning Rules
 - Fix: broken LaTeX (unclosed $, split expressions), broken markdown, page \
@@ -58,86 +18,79 @@ numbers, headers/footers, watermarks, redundant blank lines, broken paragraph \
 joins.
 - Preserve: all math content and notation, the author's voice, math \
 environments, lists, theory blocks.
-- Omit: section/chapter heading lines (# and ##) — these are already captured \
-as node titles in the tree.
 
-## Content Assignment
-Partition the cleaned text so every line belongs to exactly one node. Walk the \
-window top to bottom:
-- Section preamble or discussion -> assign to the existing section node, or \
-create a new generic child.
-- Formal statement (definition, theorem, lemma, etc.) -> create a new theory \
-node.
-- Proof, remark, exercise -> create a new child node of the appropriate type.
+## Annotation Format
 
-Multiple valid tree structures exist for the same text. The only hard constraint \
-is that you cannot reorder text. Choose whichever structure best reflects the \
-textbook's logical organisation.
+Wrap every structural unit in HTML comments:
 
-IMPORTANT: You MUST process the window content sequentially from the FIRST line \
-forward. Do not skip or omit any content. Every piece of raw text before your \
-cutoff point must appear (cleaned) in the chunk file and be assigned to a node.
+```
+<!-- tree:start id="node_id" title="Node Title" -->
+...cleaned content...
+<!-- tree:end id="node_id" -->
+```
 
-## Node Rules
-- Valid node_type values: definition, theorem, lemma, proposition, remark, \
-exercise, example, generic (default).
-- Node IDs must be unique. Use the textbook's own numbering to help ensure \
-uniqueness. Check the tree state below for conflicts.
-- dependencies: list IDs of theory nodes whose statements are used in this \
-node's formulation or proof. Only reference nodes already in the tree state or \
-created earlier in this chunk.
+### Attributes
+- id (required, unique) — use textbook numbering: ch01, sec01_01, thm_1_2, etc.
+- title (required) — descriptive title for the node
+- type (optional) — ONLY for semantic math units. Valid values: definition, \
+theorem, lemma, proposition, corollary, proof, remark, example, exercise, axiom
+- anc (optional, advisory) — ancestor path hint like "ch_1/sec_1_2"
+- proves (optional) — ONLY on type="proof" nodes. Value is the id of the \
+statement being proved.
+- dependencies (optional) — comma-separated list of prerequisite node ids
 
-## Parameters
-- Chunk ID: {chunk_id}
-- Raw file line range: {raw_start} to {raw_end} (1-indexed)
-- Write the cleaned chunk to: {chunk_path}
+### Rules
+- Nesting is the source of truth for structure. A child node must be between \
+its parent's start and end comments.
+- Containers (chapters, sections, subsections) should have NO type attribute.
+- Use type ONLY for text spans that ARE that thing (e.g., a theorem statement \
+gets type="theorem", but the section containing the theorem does not).
+- Proofs must be separate nodes with type="proof" and proves="<statement_id>".
+- dependencies should reference earlier nodes required for understanding. Use \
+appropriately — material prerequisites only.
+- Node IDs must be globally unique. Check the open nodes and tree state below.
 
 ## Cutoff
-You do not have to process the entire window. You must clean and write ALL \
-content from the start of the window up to your chosen cutoff point — the \
-cutoff is where you STOP, not what you skip. Everything before the cutoff must \
-be in the chunk file.
 
-Choose your cutoff after processing at least 60% of the window ({min_lines} \
-raw lines). Stop at a natural boundary — between sections, after a proof ends, \
-or after an exercise block. Report the 1-indexed raw file line number where you \
-stopped as cutoff_line (between {raw_start} and {raw_end}). The next chunk will \
-pick up from that line.
+You do not have to process the entire raw file. Process at least 60% of the \
+raw lines ({min_lines} lines). Stop at a natural boundary (between sections, \
+after a proof, after exercises).
 
-The chunk .md file you write must contain cleaned text for ALL raw lines from \
-{raw_start} up to your cutoff_line. Your metadata content line ranges must \
-match the actual lines in the file you wrote.
+At your cutoff point, insert:
+```
+<!-- cutoff -->
+```
+
+Everything AFTER the cutoff comment must be UNCHANGED from the raw file — \
+copy the remaining raw lines verbatim. Everything BEFORE the cutoff must be \
+cleaned and annotated.
+
+## Validation
+
+After writing the annotated file, run the validator:
+```bash
+uv run python -m claude_parser.validator_cli {clean_path} --raw-file {raw_path}{known_ids_arg}
+```
+
+If the validator reports errors, fix them in the file and re-validate. \
+Warnings are advisory — fix if straightforward, otherwise note them.
 
 ## Output
-1. Write the cleaned chunk .md file using the Write tool.
-2. Print ONLY the metadata JSON to stdout — no commentary, no fences.
 
-Metadata format:
+1. Write the annotated file to {clean_path} using the Write tool.
+2. Run the validator using Bash.
+3. Fix any errors and re-validate.
+4. Print ONLY this JSON to stdout — no commentary, no fences:
+
 {{
-  "chunk_id": "...",
-  "cutoff_line": <1-indexed raw file line where you stopped>,
-  "nodes": [
-    {{"id": "...", "title": "...", "content": [{{"first_line": N, "last_line": M}}]}},
-    ...
-  ],
+  "chunk_id": "{chunk_id}",
+  "cutoff_raw_line": <1-indexed raw file line where you stopped>,
+  "n_lines_cleaned": <number of cleaned lines before cutoff>,
   "notes": null
 }}
 
-Node fields:
-- Existing nodes (ID already in tree state): id, title, content.
-- New nodes: id, title, parent_id (required); node_type, content, dependencies \
-(optional).
-- content line numbers are 1-indexed relative to the chunk .md file you write.
-- No overlaps, no gaps — every cleaned line assigned to exactly one node.
-- Parents before children in the node list; each child's content must come \
-after its parent's content.
-
-## Current Tree State
-```json
-{tree_state_json}
-```
-
-{overlap_section}\
-## Window Content (raw lines {raw_start}–{raw_end})
-{window_content}
+{open_nodes_section}\
+{context_section}\
+{memory_section}\
+## Raw file: {raw_path} ({raw_line_count} lines, raw lines {raw_start}–{raw_end} of source)
 """

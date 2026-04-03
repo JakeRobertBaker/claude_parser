@@ -1,58 +1,65 @@
-from claude_parser.application.prompt_templates import (
-    PHASE0_TEMPLATE,
-    SECTION_TEMPLATE,
-)
+from claude_parser.application.prompt_templates import ANNOTATION_BATCH_TEMPLATE
 from claude_parser.config import ParserConfig
 
 
-def build_phase0_prompt(raw_content: str, config: ParserConfig) -> str:
-    """Build the Phase 0 prompt with raw content inlined."""
-    line_count = raw_content.count("\n")
-    return PHASE0_TEMPLATE.format(
-        raw_content=raw_content,
-        line_count=line_count,
-    )
-
-
-def build_section_prompt(
-    window_content: str,
-    raw_start_line: int,
-    raw_end_line: int,
+def build_batch_prompt(
+    raw_path: str,
+    clean_path: str,
     chunk_id: str,
-    overlap_text: str,
-    tree_state_json: str,
-    chunk_path: str,
+    raw_start: int,
+    raw_end: int,
+    raw_line_count: int,
+    open_stack: list[str],
+    context_text: str,
+    memory_text: str,
+    known_ids: list[str],
     config: ParserConfig,
 ) -> str:
-    """Build the section prompt with window content and tree state inlined."""
-    window_lines = raw_end_line - raw_start_line
-    min_lines = int(window_lines * 0.6)
+    """Build the annotation batch prompt."""
+    min_lines = int((raw_end - raw_start) * 0.6)
 
-    if overlap_text:
-        overlap_section = (
-            "## Context (already processed, do not include in output)\n"
-            f"{overlap_text}\n\n"
+    if open_stack:
+        open_nodes_section = (
+            "## Currently Open Nodes (from previous batch)\n"
+            "These nodes were started but not yet closed. You should either "
+            "continue adding content to them or close them with tree:end.\n\n"
+            + "\n".join(f"- `{nid}`" for nid in open_stack)
+            + "\n\n"
         )
     else:
-        overlap_section = ""
+        open_nodes_section = ""
 
-    return SECTION_TEMPLATE.format(
+    if context_text:
+        context_section = (
+            "## Context (last lines of previous batch, already processed)\n"
+            f"{context_text}\n\n"
+        )
+    else:
+        context_section = ""
+
+    if memory_text:
+        memory_section = (
+            "## Memory (persistent notes across batches)\n"
+            f"{memory_text}\n\n"
+        )
+    else:
+        memory_section = ""
+
+    if known_ids:
+        known_ids_arg = " --known-ids " + " ".join(known_ids)
+    else:
+        known_ids_arg = ""
+
+    return ANNOTATION_BATCH_TEMPLATE.format(
+        raw_path=raw_path,
+        clean_path=clean_path,
         chunk_id=chunk_id,
-        raw_start=raw_start_line + 1,
-        raw_end=raw_end_line,
+        raw_start=raw_start,
+        raw_end=raw_end,
+        raw_line_count=raw_line_count,
         min_lines=min_lines,
-        chunk_path=chunk_path,
-        tree_state_json=tree_state_json,
-        overlap_section=overlap_section,
-        window_content=window_content,
+        open_nodes_section=open_nodes_section,
+        context_section=context_section,
+        memory_section=memory_section,
+        known_ids_arg=known_ids_arg,
     )
-
-
-def build_retry_prompt(original_prompt: str, duplicate_ids: list[str]) -> str:
-    ids_str = ", ".join(f"'{i}'" for i in duplicate_ids)
-    suffix = (
-        f"\n\n## IMPORTANT CORRECTION\n"
-        f"The following node IDs appear more than once in your output: {ids_str}.\n"
-        f"Each node ID must be unique. Deduplicate these IDs."
-    )
-    return original_prompt + suffix

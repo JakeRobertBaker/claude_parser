@@ -16,7 +16,6 @@ def make_node(
     node_dict: TreeDict,
     content_list: list[Content] | None = None,
     children: list[Node] | None = None,
-    theory: bool = False,
     node_type: NodeType = NodeType.GENERIC,
 ) -> Node:
     return Node(
@@ -25,7 +24,6 @@ def make_node(
         children=children or [],
         content_list=content_list or [],
         node_type=node_type,
-        theory=theory,
         node_dict=node_dict,
     )
 
@@ -486,14 +484,13 @@ class TestTreeDictSetRoot:
 class TestDependencies:
     def test_dependency_resolved(self):
         td = make_tree_dict()
-        dep = make_node("dep", td, theory=True, node_type=NodeType.DEF)
+        dep = make_node("dep", td, node_type=NodeType.DEF)
         n = Node(
             id="n",
             title="n",
             children=[],
             content_list=[],
             node_type=NodeType.GENERIC,
-            theory=False,
             node_dict=td,
             dependency_ids=["dep"],
         )
@@ -507,7 +504,6 @@ class TestDependencies:
             children=[],
             content_list=[],
             node_type=NodeType.GENERIC,
-            theory=False,
             node_dict=td,
             dependency_ids=["missing"],
         )

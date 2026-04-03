@@ -3,7 +3,7 @@ import logging
 import sys
 
 from claude_parser.adapters.claude_cli import ClaudeCLIAdapter
-from claude_parser.adapters.filesystem_store import FilesystemStore
+from claude_parser.adapters.filesystem_state_store import FilesystemStateStore
 from claude_parser.adapters.git_adapter import GitAdapter
 from claude_parser.application.parsing_service import ParsingService
 from claude_parser.config import ParserConfig
@@ -33,15 +33,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--task-model", default="haiku",
-        help="Model for section processing (default: haiku).",
+        help="Model for batch processing (default: haiku).",
     )
     parser.add_argument(
-        "--phase0-model", default="haiku",
-        help="Model for Phase 0 front matter analysis (default: haiku).",
-    )
-    parser.add_argument(
-        "--stride", type=int, default=450,
-        help="Lines per section window (default: 450).",
+        "--batch-tokens", type=int, default=8000,
+        help="Approximate token budget per batch (default: 8000).",
     )
     parser.add_argument(
         "--max-sections", type=int, default=None,
@@ -65,23 +61,21 @@ def main() -> None:
         raw_path=args.raw,
         state_dir=args.state,
         task_model=args.task_model,
-        phase0_model=args.phase0_model,
-        section_stride=args.stride,
+        batch_tokens=args.batch_tokens,
         dry_run=args.dry_run,
         resume=args.resume,
         max_sections=args.max_sections,
     )
 
     llm = ClaudeCLIAdapter()
-    store = FilesystemStore(config.state_dir)
-    store.init()
+    state_store = FilesystemStateStore(config.state_dir)
+    state_store.init()
     vcs = GitAdapter(config.state_dir)
 
     service = ParsingService(
         config=config,
         llm=llm,
-        tree_repo=store,
-        progress_store=store,
+        state=state_store,
         vcs=vcs,
     )
 

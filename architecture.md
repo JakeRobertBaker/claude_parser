@@ -27,8 +27,8 @@ Dependencies always point inward:
 
 ```
 cli.py → adapters/ → application/ → ports/ → domain/
-                          ↓                      ↑
-                          └──────────────────────┘
+                         ↓                      ↑
+                         └──────────────────────┘
 ```
 
 - `domain/` depends on nothing
@@ -43,40 +43,46 @@ cli.py → adapters/ → application/ → ports/ → domain/
 src/claude_parser/
 ├── cli.py                              # Composition root: wires adapters into ports
 ├── config.py                           # ParserConfig dataclass
+├── validator_cli.py                    # CLI for annotation validator (invoked by Haiku via Bash)
 │
 ├── domain/                             # Pure business logic, ZERO external deps
 │   ├── node.py                         # Node, TreeDict, NodeType — core tree entities
 │   ├── content.py                      # Content value object (chunk_number, first_line, last_line)
 │   ├── content_bound.py                # ContentBound — spatial bounds with union/intersect
 │   ├── partition.py                    # ContentPartition — overlap validation
-│   └── protocols.py                    # ContentBase protocol (ordering + truthiness)
+│   ├── protocols.py                    # ContentBase protocol (ordering + truthiness)
+│   ├── annotation_parser.py            # Parse <!-- tree:start/end --> comments from markdown
+│   ├── annotation_tree_builder.py      # Fragment AST builder — handles cross-batch nodes
+│   └── validator.py                    # Annotation validation (nesting, IDs, proves, deps)
 │
 ├── ports/                              # Driven-side interfaces (Protocol classes)
 │   ├── llm.py                          # LLMPort — invoke(prompt, model, ...) → LLMResult
 │   ├── vcs.py                          # VCSPort — init_repo(), commit_all(message)
-│   ├── tree_repository.py              # TreeRepositoryPort — load/save the tree
-│   └── progress_store.py               # ProgressStorePort — load/save progress state
+│   └── state.py                        # StatePort — load/save pipeline state + tree
 │
 ├── application/                        # Use-case orchestration
-│   ├── parsing_service.py              # ParsingService — main entry point, depends on ports only
-│   ├── merge.py                        # Chunk merging + domain validation
+│   ├── parsing_service.py              # ParsingService — single-phase annotation loop
+│   ├── pipeline_state.py               # PipelineState dataclass (batch-to-batch state)
+│   ├── merge.py                        # Legacy chunk merging (kept for reference)
 │   ├── serialization.py                # Tree ↔ dict serialization (used by service + adapters)
 │   ├── llm_response_parser.py          # Extract JSON from Claude's stream-json output
 │   ├── prompt_builder.py               # Prompt assembly from templates
-│   ├── prompt_templates.py             # PHASE0_TEMPLATE, SECTION_TEMPLATE
-│   └── progress.py                     # ProgressState dataclass
+│   └── prompt_templates.py             # ANNOTATION_BATCH_TEMPLATE
 │
 ├── adapters/                           # Infrastructure implementations
 │   ├── claude_cli.py                   # LLMPort impl — wraps `claude` CLI via subprocess
 │   ├── git_adapter.py                  # VCSPort impl — wraps `git` CLI via subprocess
-│   └── filesystem_store.py             # TreeRepositoryPort + ProgressStorePort impl — JSON files
-│
+│   └── filesystem_state_store.py       # StatePort impl — state.json + tree.json on disk
+
 tests/
 ├── test_tree.py                        # Node construction, ordering rules, propagation
 ├── test_content.py                     # Content ordering, ContentPartition overlap checks
 ├── test_json_adapter.py                # Tree deserialization from fixture files
 ├── test_serialization_roundtrip.py     # Serialize → deserialize → verify identity
-└── test_merge.py                       # merge_chunk, validate_metadata, dependency report
+├── test_merge.py                       # merge_chunk, validate_metadata, dependency report
+├── test_annotation_parser.py           # Parse start/end/cutoff events from markdown
+├── test_validator.py                   # Nesting errors, duplicate IDs, proves warnings
+└── test_annotation_tree_builder.py     # Fragment AST: single batch, cross-batch, cutoff
 ```
 
 ## Wiring Example
@@ -85,21 +91,20 @@ The CLI creates concrete adapters and injects them into the service via port-typ
 
 ```python
 # cli.py — the only place that knows which adapter goes in which port
-llm   = ClaudeCLIAdapter()              # plug this adapter...
-store = FilesystemStore(config.state_dir)
-store.init()
-vcs   = GitAdapter(config.state_dir)
+llm         = ClaudeCLIAdapter()
+state_store = FilesystemStateStore(config.state_dir)
+state_store.init()
+vcs         = GitAdapter(config.state_dir)
 
 service = ParsingService(
     config=config,
-    llm=llm,                            # ...into LLMPort
-    tree_repo=store,                    # ...into TreeRepositoryPort
-    progress_store=store,               # ...into ProgressStorePort
-    vcs=vcs,                            # ...into VCSPort
+    llm=llm,               # ...into LLMPort
+    state=state_store,      # ...into StatePort
+    vcs=vcs,                # ...into VCSPort
 )
 ```
 
-`ParsingService` only sees the port shapes. It calls `self.llm.invoke(...)`, `self.tree_repo.save(root)`, etc. — never knowing whether it's talking to Claude, a mock, or something else entirely.
+`ParsingService` only sees the port shapes. It calls `self.llm.invoke(...)`, `self.state.save_tree(root)`, etc. — never knowing whether it's talking to Claude, a mock, or something else entirely.
 
 ## End-to-End Flow
 
@@ -107,30 +112,48 @@ service = ParsingService(
 CLI  →  creates adapters, injects into ParsingService
      →  calls service.run()
 
-Phase 0:  read first 500 lines of raw markdown
-        → build phase0 prompt → llm.invoke() (no tools)
-        → parse JSON → deserialize skeleton tree → save tree → git commit
+Main Loop (per batch):
+        → load state + tree (or initialize if first run)
+        → compute batch end (token-based: ~4 chars/token)
+        → write raw_i.md (batch of raw lines)
+        → build annotation prompt (with open_stack, context, memory)
+        → llm.invoke(tools=["Write", "Bash"])
+        → Haiku writes clean_i.md (cleaned + annotated markdown)
+        → Haiku calls validator via Bash, fixes issues
+        → service parses annotations from clean_i.md
+        → service-side validation (backup check)
+        → process_batch_annotations() builds/extends domain tree
+        → update PipelineState (open_stack, pending_edges)
+        → save state + tree → git commit
 
-Main Loop (per section):
-        → load progress + tree → calculate window [start, end)
-        → build section prompt (with overlap) → llm.invoke(tools=["Write"])
-        → Claude writes chunk file + returns metadata JSON
-        → validate metadata → check for duplicate IDs (retry if needed)
-        → merge_chunk() into domain tree (Node.add_content / add_child)
-        → save tree + progress → git commit
-
-Final:  → build + save dependency_report.json
+Final:  → concatenate clean_i.md[before cutoff] → final.md
 ```
+
+## Annotation Format
+
+Haiku embeds structure inline using HTML comments:
+
+```markdown
+<!-- tree:start id="thm_1_2" type="theorem" title="Theorem 1.2" -->
+Statement of the theorem...
+<!-- tree:end id="thm_1_2" -->
+```
+
+Attributes: id (required), title (required), type (optional, semantic only),
+anc (optional, advisory), proves (optional, proof only),
+dependencies (optional, comma-separated IDs).
+
+Nesting is the source of truth for tree structure. A `<!-- cutoff -->` comment
+marks where cleaning stops; lines after it are unchanged raw text.
 
 ## Ports & Adapters Analogy
 
 A **port** is a socket — it defines what shape plugs in. An **adapter** is the dongle that connects a specific thing to that socket.
 
-| Port (socket)          | Adapter (dongle)       | What it connects              |
-|------------------------|------------------------|-------------------------------|
-| `LLMPort`              | `ClaudeCLIAdapter`     | Claude CLI subprocess         |
-| `VCSPort`              | `GitAdapter`           | Git CLI subprocess            |
-| `TreeRepositoryPort`   | `FilesystemStore`      | tree.json on disk             |
-| `ProgressStorePort`    | `FilesystemStore`      | progress.json on disk         |
+| Port (socket)          | Adapter (dongle)           | What it connects              |
+|------------------------|----------------------------|-------------------------------|
+| `LLMPort`              | `ClaudeCLIAdapter`         | Claude CLI subprocess         |
+| `VCSPort`              | `GitAdapter`               | Git CLI subprocess            |
+| `StatePort`            | `FilesystemStateStore`     | state.json + tree.json on disk|
 
 Tomorrow you could write `OpenAIAdapter` for `LLMPort` or `NoOpVCSAdapter` for dry runs — same ports, different adapters. The application layer wouldn't change.
