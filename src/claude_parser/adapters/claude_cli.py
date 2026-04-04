@@ -1,4 +1,5 @@
 import logging
+import os
 import subprocess
 
 from claude_parser.ports.llm import LLMResult
@@ -51,12 +52,18 @@ class ClaudeCLIAdapter:
 
         logger.debug("Invoking claude with model=%s, timeout=%d", model, timeout)
 
+        # Raise MCP output token limit so large read_batch results are not
+        # persisted to disk and replaced with a 2KB preview. Default is 25000.
+        env = os.environ.copy()
+        env["MAX_MCP_OUTPUT_TOKENS"] = "200000"
+
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=env,
             )
         except subprocess.TimeoutExpired:
             logger.error("Claude timed out after %ds", timeout)

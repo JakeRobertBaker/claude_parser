@@ -73,15 +73,15 @@ class BatchMCPServer:
         @server.list_tools()
         async def list_tools() -> list[mcp_types.Tool]:
             return [
-                mcp_types.Tool(
-                    name="read_batch",
-                    description=(
+                mcp_types.Tool.model_validate({
+                    "name": "read_batch",
+                    "description": (
                         "Read the raw text and batch metadata: chunk_id, open nodes, "
                         "context, known IDs. Returns everything needed for this batch."
                     ),
-                    inputSchema={"type": "object", "properties": {}},
-                    meta={"anthropic": {"maxResultSizeChars": 500000}},
-                ),
+                    "inputSchema": {"type": "object", "properties": {}},
+                    "_meta": {"anthropic/maxResultSizeChars": 500000},
+                }),
                 mcp_types.Tool(
                     name="submit_clean",
                     description=(

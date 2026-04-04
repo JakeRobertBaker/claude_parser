@@ -14,8 +14,20 @@ Another issue we can see in this log is that it is not very clear what read_bath
 ## More fundamental Questions
 Would we prefer to have multiple batches or pagination per single invocation to avoid repeat setup and tool info messages. Or am I mistaken since a long claude session resubmits the entire history each time a further claude query is made?
 
-## More potential ideas
-I am wondering if we want to fundamentally rethink some of this. 
+We are now able to have tools avoid truncation output limits via 
+
+```{
+  "name": "get_schema",
+  "description": "Returns the full database schema",
+  "_meta": {
+    "anthropic/maxResultSizeChars": 500000
+  }
+}```
+
+So we could move away from having the raw inserted into initial prompt.
+
 
 ## Parsing Service Improvements
 I think fundamentally there should be state with all the methods. The MCP server is how Haiku can talk to those state methods. I think we should remove VCS entirely, if a particular StatePort like FilesystemStateStore want's version control then that should be up to the adapter.
+
+Carefully consider these ideas. Ask questions on any concerns or uncertainties. 
