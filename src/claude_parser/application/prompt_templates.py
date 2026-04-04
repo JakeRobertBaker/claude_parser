@@ -6,11 +6,14 @@ Templates use str.format() — literal braces must be doubled: {{ and }}.
 ANNOTATION_BATCH_TEMPLATE = """\
 You are a task agent cleaning raw OCR markdown and annotating document structure.
 
-## Task
+## Workflow
 
-Clean the raw text in {raw_path} and write an annotated version to {clean_path}.
-The annotated file must contain cleaned markdown with inline tree structure \
-comments.
+1. Call the `read_batch` tool to get the raw text and batch metadata.
+2. Clean and annotate the raw text (see rules below).
+3. Choose a cutoff point (natural boundary: between sections, after a proof, after exercises).
+4. Call `submit_clean` with your cleaned text and the cutoff raw line number.
+5. If validation fails, fix the issues and call `submit_clean` again.
+6. Once valid, call `submit_result` with the final metadata.
 
 ## Cleaning Rules
 - Fix: broken LaTeX (unclosed $, split expressions), broken markdown, page \
@@ -48,49 +51,23 @@ gets type="theorem", but the section containing the theorem does not).
 - Proofs must be separate nodes with type="proof" and proves="<statement_id>".
 - dependencies should reference earlier nodes required for understanding. Use \
 appropriately — material prerequisites only.
-- Node IDs must be globally unique. Check the open nodes and tree state below.
+- Node IDs must be globally unique. The `read_batch` response includes known \
+IDs from previous batches — do not reuse them.
 
 ## Cutoff
 
-You do not have to process the entire raw file. Process at least 60% of the \
-raw lines ({min_lines} lines). Stop at a natural boundary (between sections, \
-after a proof, after exercises).
+Process at least 60% of the raw lines (the `min_clean_lines` field in \
+`read_batch` response). Stop at a natural boundary.
 
-At your cutoff point, insert:
-```
-<!-- cutoff -->
-```
-
-Everything AFTER the cutoff comment must be UNCHANGED from the raw file — \
-copy the remaining raw lines verbatim. Everything BEFORE the cutoff must be \
-cleaned and annotated.
-
-## Validation
-
-After writing the annotated file, run the validator:
-```bash
-uv run python -m claude_parser.validator_cli {clean_path} --raw-file {raw_path}{known_ids_arg}
-```
-
-If the validator reports errors, fix them in the file and re-validate. \
-Warnings are advisory — fix if straightforward, otherwise note them.
+The `cutoff_raw_line` you submit to `submit_clean` is the 1-indexed source \
+file line where you stopped. Do NOT include any raw content after the cutoff \
+— the server handles the remainder automatically.
 
 ## Output
 
-1. Write the annotated file to {clean_path} using the Write tool.
-2. Run the validator using Bash.
-3. Fix any errors and re-validate.
-4. Print ONLY this JSON to stdout — no commentary, no fences:
-
-{{
-  "chunk_id": "{chunk_id}",
-  "cutoff_raw_line": <1-indexed raw file line where you stopped>,
-  "n_lines_cleaned": <number of cleaned lines before cutoff>,
-  "notes": null
-}}
-
-{open_nodes_section}\
-{context_section}\
-{memory_section}\
-## Raw file: {raw_path} ({raw_line_count} lines, raw lines {raw_start}–{raw_end} of source)
+After `submit_clean` returns valid, call `submit_result` with:
+- chunk_id: from the read_batch response
+- cutoff_raw_line: same value you used in submit_clean
+- n_lines_cleaned: number of lines in your cleaned text
+- notes: null (or a brief note if something unusual happened)
 """

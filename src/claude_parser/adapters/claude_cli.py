@@ -16,6 +16,7 @@ class ClaudeCLIAdapter:
         allowed_tools: list[str],
         add_dirs: list[str],
         timeout: int,
+        mcp_config_path: str | None = None,
     ) -> LLMResult:
         cmd = [
             "claude", "-p", prompt,
@@ -23,10 +24,30 @@ class ClaudeCLIAdapter:
             "--verbose",
             "--output-format", "stream-json",
         ]
-        if allowed_tools:
-            cmd.extend(["--allowedTools", ",".join(allowed_tools)])
-        for d in add_dirs:
-            cmd.extend(["--add-dir", d])
+
+        if mcp_config_path:
+            # MCP mode: disable all built-in tools, use only our MCP server.
+            # --system-prompt overrides the default system prompt so Claude
+            # won't try to read project memory or CLAUDE.md.
+            # --tools "" disables all built-in tools (Read, Write, Bash).
+            # --strict-mcp-config ensures only our MCP server is loaded.
+            # --allowedTools pre-approves our MCP tools (no permission prompts in -p mode).
+            cmd.extend([
+                "--system-prompt", "You are a task agent. Use only the MCP tools provided.",
+                "--tools", "",
+                "--mcp-config", mcp_config_path,
+                "--strict-mcp-config",
+                "--allowedTools",
+                "mcp__batch_tools__read_batch,"
+                "mcp__batch_tools__submit_clean,"
+                "mcp__batch_tools__submit_result",
+            ])
+        else:
+            # Legacy mode: use built-in tools directly
+            if allowed_tools:
+                cmd.extend(["--allowedTools", ",".join(allowed_tools)])
+            for d in add_dirs:
+                cmd.extend(["--add-dir", d])
 
         logger.debug("Invoking claude with model=%s, timeout=%d", model, timeout)
 

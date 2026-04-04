@@ -2,6 +2,7 @@ import argparse
 import logging
 import sys
 
+from claude_parser.adapters.batch_mcp_server import BatchMCPServer
 from claude_parser.adapters.claude_cli import ClaudeCLIAdapter
 from claude_parser.adapters.filesystem_state_store import FilesystemStateStore
 from claude_parser.adapters.git_adapter import GitAdapter
@@ -43,8 +44,8 @@ def main() -> None:
     parser.add_argument(
         "--batch-tokens",
         type=int,
-        default=8000,
-        help="Approximate token budget per batch (default: 8000).",
+        default=16000,
+        help="Approximate token budget per batch (default: 16000).",
     )
     parser.add_argument(
         "--max-sections",
@@ -89,19 +90,24 @@ def main() -> None:
     state_store = FilesystemStateStore(config.state_dir)
     state_store.init()
     vcs = GitAdapter(config.state_dir)
+    batch_tools = BatchMCPServer(state_store, config.state_dir)
 
-    service = ParsingService(
-        config=config,
-        llm=llm,
-        state=state_store,
-        vcs=vcs,
-    )
+    batch_tools.start()
 
     try:
+        service = ParsingService(
+            config=config,
+            llm=llm,
+            state=state_store,
+            vcs=vcs,
+            batch_tools=batch_tools,
+        )
         service.run()
     except RuntimeError as e:
         logger.error("%s", e)
         sys.exit(1)
+    finally:
+        batch_tools.stop()
 
 
 if __name__ == "__main__":

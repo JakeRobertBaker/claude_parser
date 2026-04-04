@@ -17,4 +17,5 @@ class LLMPort(Protocol):
         allowed_tools: list[str],
         add_dirs: list[str],
         timeout: int,
+        mcp_config_path: str | None = None,
     ) -> LLMResult: ...

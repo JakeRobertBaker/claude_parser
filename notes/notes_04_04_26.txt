@@ -30,7 +30,7 @@ Proposed Solution:
 I think we need to move to a set of tools, I assume this will be via MCP.
 This has already been considered in the past. Currently the StatePort methods are called in ParsingService. However the actions that Haiku does via read and write are coupled with FilesystemStateStore's conventions and file names. The solution to this would have been tools.
 
-Having a tool would also address these cutoff issues. A MCP with read_state, submit_cutoff, write_state, validate_state, commit_state (or something like this - we would need to carefully decide how we do write/validate/commit) would be able to have a read token limit of more than 10k. 
+Having a tool would also address these cutoff issues. A MCP with read_state, submit_cutoff, write_state, validate_state, commit_state (or something like this - we would need to carefully decide how we do write/validate/commit) would be able to have a read token limit of more than 10k. I assume `FastMCP` is the way to go? 
 
 All Haiku needs to do then is pick the cutoff and submit it's cleaned proposal up to cutoff (no wasted effort on post cutoff alignment).
 
@@ -49,4 +49,4 @@ Let's plan and then implement. Ask me any concerns or uncertainties. Do not make
 Once changes are made:
 - do `uv run ty check src/ tests/`, `uv run ruff check src/ tests/` `uv run pytest tests/`
 - you may want to update CLAUDE.md and architecture.md.
-- ensures in integration test works ``uv run python -m claude_parser.cli --raw raw/companion_to_analysis.md --state ~/ai_tool_development/knowledge_prasing/attempt_states/full_attempt_i --timeout 600`. Be careful to ensure you are writing to a new dir.
+- ensures in integration test works ``uv run python -m claude_parser.cli --raw raw/companion_to_analysis_mini.md --state ~/ai_tool_development/knowledge_prasing/attempt_states/full_attempt_i --timeout 600`. Be careful to ensure you are writing to a new dir. You may want to use --max-sections 3 as an arg first, maybe consider a full run later.

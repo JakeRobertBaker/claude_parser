@@ -1,7 +1,6 @@
 from claude_parser.application.tokens import approximate_claude_tokens
 import logging
 
-from claude_parser.application.llm_response_parser import extract_json_from_stream
 from claude_parser.application.pipeline_state import PipelineState
 from claude_parser.application.prompt_builder import build_batch_prompt
 from claude_parser.config import ParserConfig
@@ -9,13 +8,13 @@ from claude_parser.domain.annotation_parser import parse_annotations
 from claude_parser.domain.annotation_tree_builder import process_batch_annotations
 from claude_parser.domain.node import TreeDict
 from claude_parser.domain.validator import validate_annotations
+from claude_parser.ports.batch_tools import BatchToolsPort
 from claude_parser.ports.llm import LLMPort
 from claude_parser.ports.state import StatePort
 from claude_parser.ports.vcs import VCSPort
 
 logger = logging.getLogger(__name__)
 
-_BATCH_TOOLS = ["Write", "Bash"]
 _CHARS_PER_TOKEN = 4
 
 
@@ -26,11 +25,13 @@ class ParsingService:
         llm: LLMPort,
         state: StatePort,
         vcs: VCSPort,
+        batch_tools: BatchToolsPort,
     ):
         self.config = config
         self.llm = llm
         self.state = state
         self.vcs = vcs
+        self.batch_tools = batch_tools
 
     def run(self) -> None:
         self.state.init_dirs()
@@ -61,6 +62,8 @@ class ParsingService:
             total_lines,
         )
 
+        prompt = build_batch_prompt()
+
         sections_completed = 0
         while pipeline_state.next_start_line < total_lines:
             if (
@@ -84,10 +87,9 @@ class ParsingService:
                 end,
             )
 
-            # Write raw batch file
+            # Write raw batch file (for reference/debugging)
             batch_content = "".join(raw_lines[start:end])
             self.state.write_raw_batch(batch_num, batch_content)
-            raw_batch_path = self.state.resolve_raw_path(batch_num)
 
             # Build context from previous clean file
             context_text = self.state.get_context_lines(
@@ -98,34 +100,35 @@ class ParsingService:
             # Read memory if exists
             memory_text = self.state.read_memory()
 
-            clean_path = self.state.resolve_clean_path(batch_num)
             known_ids = list(tree_dict._data.keys())
+            min_lines = int((end - start) * 0.6)
 
-            prompt = build_batch_prompt(
-                raw_path=raw_batch_path,
-                clean_path=clean_path,
+            # Setup MCP server state for this batch
+            self.batch_tools.setup_batch(
+                batch_num=batch_num,
+                raw_content=batch_content,
                 chunk_id=chunk_id,
-                raw_start=start + 1,
+                raw_start=start + 1,  # 1-indexed for Haiku
                 raw_end=end,
-                raw_line_count=end - start,
                 open_stack=pipeline_state.open_stack,
                 context_text=context_text,
-                memory_text=memory_text,
                 known_ids=known_ids,
-                config=self.config,
+                memory_text=memory_text,
+                min_clean_lines=min_lines,
             )
 
             if self.config.dry_run:
                 logger.info("DRY RUN — Batch prompt:\n%s", prompt[:500])
                 break
 
-            # Invoke Haiku
+            # Invoke Haiku with MCP tools
             result = self.llm.invoke(
                 prompt=prompt,
                 model=self.config.task_model,
-                allowed_tools=_BATCH_TOOLS,
-                add_dirs=[self.config.state_dir],
+                allowed_tools=[],
+                add_dirs=[],
                 timeout=self.config.timeout,
+                mcp_config_path=self.batch_tools.mcp_config_path,
             )
 
             # Save log
@@ -139,37 +142,29 @@ class ParsingService:
                     f"See failures/{chunk_id}_raw_response.txt"
                 )
 
-            # Parse LLM's JSON output for cutoff info
-            metadata = extract_json_from_stream(result.stdout)
-            cutoff_raw_line = end  # default: processed everything
-            if metadata and "cutoff_raw_line" in metadata:
-                reported = metadata["cutoff_raw_line"]
-                if isinstance(reported, int):
-                    if reported < start:
-                        # LLM reported batch-relative line, convert to source line
-                        cutoff_raw_line = start + reported
-                        logger.warning(
-                            "[%s] cutoff %d < batch start %d, treating as batch-relative → %d",
-                            chunk_id,
-                            reported,
-                            start,
-                            cutoff_raw_line,
-                        )
-                    else:
-                        cutoff_raw_line = reported
-                    # Clamp to batch bounds
-                    cutoff_raw_line = max(start + 1, min(cutoff_raw_line, end))
+            # Get structured result from MCP server
+            batch_result = self.batch_tools.get_result()
+            if batch_result is None:
+                self.state.write_failure(chunk_id, result.stdout)
+                raise RuntimeError(
+                    f"[{chunk_id}] No result submitted by LLM. "
+                    f"See failures/{chunk_id}_raw_response.txt"
+                )
 
-            # Read and parse the clean file
+            cutoff_raw_line = batch_result.cutoff_raw_line
+            # Clamp to batch bounds
+            cutoff_raw_line = max(start + 1, min(cutoff_raw_line, end))
+
+            # Read and parse the clean file (written by submit_clean tool)
             if not self.state.clean_batch_exists(batch_num):
                 self.state.write_failure(chunk_id, result.stdout)
                 raise RuntimeError(
-                    f"[{chunk_id}] Clean file not written by LLM: {clean_path}. "
+                    f"[{chunk_id}] Clean file not found after LLM invocation. "
                     f"See failures/{chunk_id}_raw_response.txt"
                 )
 
             clean_text = self.state.read_clean_batch(batch_num)
-            assert clean_text is not None  # guarded by clean_batch_exists above
+            assert clean_text is not None
             clean_line_count = len(clean_text.splitlines())
 
             # Parse annotations
@@ -235,7 +230,6 @@ class ParsingService:
 
     def _compute_batch_end(self, raw_lines: list[str], start: int) -> int:
         tokens = 0
-        raw_lines
         for i in range(start, len(raw_lines)):
             tokens += approximate_claude_tokens(raw_lines[i])
             if tokens >= self.config.batch_tokens:
