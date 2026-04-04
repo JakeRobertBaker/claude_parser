@@ -76,8 +76,13 @@ The `cutoff_batch_line` in `submit_clean` is the 1-indexed line number within \
 the raw text where you stopped. For example, if the raw text has 400 \
 lines and you cleaned through line 300, use cutoff_batch_line=300.
 
-Do NOT include any raw content after the cutoff in your cleaned text — the \
-server handles the remainder automatically.
+The server performs an alignment check: the final words of your cleaned_text \
+must appear in the raw lines near cutoff_batch_line. If they don't, submit_clean \
+returns an error and you must find the correct line number in the raw text and \
+resubmit. Locate the exact raw line where your cleaned content ends before \
+submitting.
+
+Do NOT include any raw content after the cutoff in your cleaned text.
 
 ## Output
 

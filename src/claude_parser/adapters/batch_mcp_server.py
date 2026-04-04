@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import socket
 import threading
 from dataclasses import dataclass, field
@@ -39,6 +40,60 @@ class _SubmitCleanResponse:
     warnings: list[str] = field(default_factory=list)
     raw_context_lines: list[str] = field(default_factory=list)
     clean_tail_lines: list[str] = field(default_factory=list)
+
+
+_WORD_RE = re.compile(r"[a-z]{4,}")
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_MATH_BLOCK_RE = re.compile(r"\$\$.*?\$\$", re.DOTALL)
+_MATH_INLINE_RE = re.compile(r"\$[^$\n]*?\$")
+
+
+def _content_tokens(text: str) -> list[str]:
+    """Extract normalized content words: lowercased, alphabetic, length >= 4.
+
+    Strips HTML comments and LaTeX math to avoid structural/math noise.
+    """
+    text = _COMMENT_RE.sub(" ", text)
+    text = _MATH_BLOCK_RE.sub(" ", text)
+    text = _MATH_INLINE_RE.sub(" ", text)
+    return _WORD_RE.findall(text.lower())
+
+
+def _check_cutoff_alignment(
+    cleaned_text: str,
+    raw_lines: list[str],
+    cutoff_batch_line: int,
+    window_before: int = 30,
+    window_after: int = 5,
+) -> str | None:
+    """Verify cleaned_text's trailing content appears near cutoff_batch_line.
+
+    Returns an error string if misaligned, or None if aligned / check skipped.
+    """
+    tail = _content_tokens(cleaned_text)
+    if len(tail) < 6:
+        return None  # too short to verify reliably
+    tail_tokens = tail[-8:]
+
+    cutoff_idx = cutoff_batch_line - 1
+    start = max(0, cutoff_idx - window_before)
+    end = min(len(raw_lines), cutoff_idx + 1 + window_after)
+    raw_window_text = "".join(raw_lines[start:end])
+    raw_window_tokens = set(_content_tokens(raw_window_text))
+
+    overlap = sum(1 for t in tail_tokens if t in raw_window_tokens)
+    if overlap >= 4:
+        return None
+
+    return (
+        f"Cutoff alignment check failed: your cleaned_text ends with words "
+        f"{tail_tokens}, but only {overlap}/8 of these appear in raw lines "
+        f"{start + 1}\u2013{end} (the {window_before}-line window ending at "
+        f"cutoff_batch_line={cutoff_batch_line}). Either your cutoff_batch_line "
+        f"is wrong, or your cleaned text drifted away from the raw content. "
+        f"Re-read the raw batch, find where your cleaned content actually stops, "
+        f"and resubmit with the correct cutoff_batch_line."
+    )
 
 
 def _find_free_port() -> int:
@@ -87,8 +142,10 @@ class BatchMCPServer:
                     description=(
                         "Submit cleaned and annotated markdown. "
                         "Only include content up to your cutoff point (do NOT include raw remainder). "
-                        "The server appends the cutoff marker and raw remainder automatically, "
-                        "runs validation, and returns results."
+                        "The server runs validation (including a cutoff alignment check "
+                        "that verifies your cleaned text's trailing content matches raw "
+                        "lines near cutoff_batch_line), appends the cutoff marker, "
+                        "writes the clean file, and returns results."
                     ),
                     inputSchema={
                         "type": "object",
@@ -211,18 +268,20 @@ class BatchMCPServer:
         errors.extend(validation.errors)
         warnings.extend(validation.warnings)
 
+        raw_lines = s.current_raw_content.splitlines(keepends=True)
+        alignment_error = _check_cutoff_alignment(
+            cleaned_text, raw_lines, cutoff_batch_line
+        )
+        if alignment_error is not None:
+            errors.append(alignment_error)
+
         if errors:
             return _SubmitCleanResponse(valid=False, errors=errors, warnings=warnings)
-
-        # Build full clean file: cleaned text + cutoff + raw remainder
-        raw_lines = s.current_raw_content.splitlines(keepends=True)
-        cutoff_offset = cutoff_batch_line
-        raw_remainder_lines = raw_lines[cutoff_offset:]
 
         if cleaned_text and not cleaned_text.endswith("\n"):
             cleaned_text += "\n"
 
-        full_content = cleaned_text + "<!-- cutoff -->\n" + "".join(raw_remainder_lines)
+        full_content = cleaned_text + "<!-- cutoff -->\n"
         s.write_clean_batch(full_content)
 
         # Report unclosed nodes
@@ -235,6 +294,7 @@ class BatchMCPServer:
         if stack:
             warnings.append(f"Unclosed nodes will carry to next batch: {list(stack)}")
 
+        cutoff_offset = cutoff_batch_line
         raw_context = raw_lines[max(0, cutoff_offset - 5) : cutoff_offset]
         cleaned_lines = cleaned_text.splitlines()
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
