@@ -62,8 +62,6 @@ class ParsingService:
             total_lines,
         )
 
-        prompt = build_batch_prompt()
-
         sections_completed = 0
         while pipeline_state.next_start_line < total_lines:
             if (
@@ -101,20 +99,31 @@ class ParsingService:
             memory_text = self.state.read_memory()
 
             known_ids = list(tree_dict._data.keys())
-            min_lines = int((end - start) * 0.6)
+
+            # Token-based minimum: 60% of the raw batch tokens
+            raw_tokens = approximate_claude_tokens(batch_content)
+            min_tokens = int(raw_tokens * 0.6)
 
             # Setup MCP server state for this batch
             self.batch_tools.setup_batch(
                 batch_num=batch_num,
                 raw_content=batch_content,
                 chunk_id=chunk_id,
-                raw_start=start + 1,  # 1-indexed for Haiku
+                raw_start=start,  # 0-indexed internal
                 raw_end=end,
                 open_stack=pipeline_state.open_stack,
                 context_text=context_text,
                 known_ids=known_ids,
                 memory_text=memory_text,
-                min_clean_lines=min_lines,
+                min_tokens=min_tokens,
+            )
+
+            # Build prompt with raw content embedded
+            prompt = build_batch_prompt(
+                raw_content=batch_content,
+                raw_start=start + 1,  # 1-indexed for display
+                raw_end=end,
+                raw_line_count=end - start,
             )
 
             if self.config.dry_run:

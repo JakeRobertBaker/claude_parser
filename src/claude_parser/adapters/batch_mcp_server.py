@@ -23,6 +23,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Mount, Route
 
+from claude_parser.application.tokens import approximate_claude_tokens
 from claude_parser.domain.annotation_parser import parse_annotations
 from claude_parser.domain.batch_types import BatchResult, SubmitCleanResponse
 from claude_parser.domain.validator import validate_annotations
@@ -38,13 +39,14 @@ class _BatchState:
     batch_num: int = 0
     raw_content: str = ""
     chunk_id: str = ""
-    raw_start: int = 0
-    raw_end: int = 0
+    raw_start: int = 0  # 0-indexed start in source file
+    raw_end: int = 0  # line count end in source file
+    raw_line_count: int = 0  # number of lines in this batch
     open_stack: list[str] = field(default_factory=list)
     context_text: str = ""
     known_ids: list[str] = field(default_factory=list)
     memory_text: str = ""
-    min_clean_lines: int = 0
+    min_tokens: int = 0  # minimum tokens of cleaned text (60% of raw batch tokens)
     # Written by submit_result tool
     result: BatchResult | None = None
 
@@ -85,7 +87,10 @@ class BatchMCPServer:
             return [
                 mcp_types.Tool(
                     name="read_batch",
-                    description="Read the current batch data: raw content, open nodes, context, and metadata.",
+                    description=(
+                        "Read batch metadata: chunk_id, open nodes, context, known IDs. "
+                        "The raw content is already in the prompt — this provides the structural context."
+                    ),
                     inputSchema={"type": "object", "properties": {}},
                 ),
                 mcp_types.Tool(
@@ -103,15 +108,15 @@ class BatchMCPServer:
                                 "type": "string",
                                 "description": "The cleaned and annotated markdown text (everything before cutoff).",
                             },
-                            "cutoff_raw_line": {
+                            "cutoff_batch_line": {
                                 "type": "integer",
                                 "description": (
-                                    "1-indexed raw source line where you stopped cleaning. "
-                                    "This is relative to the full source file, not the batch."
+                                    "1-indexed line number within THIS BATCH where you stopped cleaning. "
+                                    "For example, if you cleaned up to line 300 of the batch, use 300."
                                 ),
                             },
                         },
-                        "required": ["cleaned_text", "cutoff_raw_line"],
+                        "required": ["cleaned_text", "cutoff_batch_line"],
                     },
                 ),
                 mcp_types.Tool(
@@ -121,11 +126,14 @@ class BatchMCPServer:
                         "type": "object",
                         "properties": {
                             "chunk_id": {"type": "string"},
-                            "cutoff_raw_line": {"type": "integer"},
+                            "cutoff_batch_line": {
+                                "type": "integer",
+                                "description": "Same cutoff_batch_line you used in submit_clean.",
+                            },
                             "n_lines_cleaned": {"type": "integer"},
                             "notes": {"type": ["string", "null"]},
                         },
-                        "required": ["chunk_id", "cutoff_raw_line", "n_lines_cleaned"],
+                        "required": ["chunk_id", "cutoff_batch_line", "n_lines_cleaned"],
                     },
                 ),
             ]
@@ -149,11 +157,7 @@ class BatchMCPServer:
         b = self._batch
         data = {
             "chunk_id": b.chunk_id,
-            "raw_content": b.raw_content,
-            "raw_start": b.raw_start,
-            "raw_end": b.raw_end,
-            "raw_line_count": b.raw_end - b.raw_start,
-            "min_clean_lines": b.min_clean_lines,
+            "batch_line_count": b.raw_line_count,
             "open_stack": b.open_stack,
             "context_text": b.context_text,
             "known_ids": b.known_ids,
@@ -163,10 +167,10 @@ class BatchMCPServer:
 
     def _handle_submit_clean(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
         cleaned_text: str = args["cleaned_text"]
-        cutoff_raw_line: int = args["cutoff_raw_line"]
+        cutoff_batch_line: int = args["cutoff_batch_line"]
         b = self._batch
 
-        response = self._validate_and_write_clean(cleaned_text, cutoff_raw_line, b)
+        response = self._validate_and_write_clean(cleaned_text, cutoff_batch_line, b)
         data = {
             "valid": response.valid,
             "errors": response.errors,
@@ -177,9 +181,12 @@ class BatchMCPServer:
         return [mcp_types.TextContent(type="text", text=json.dumps(data, ensure_ascii=False))]
 
     def _handle_submit_result(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
+        cutoff_batch_line: int = args["cutoff_batch_line"]
+        # Convert batch-relative to source-relative for ParsingService
+        cutoff_source_line = self._batch.raw_start + cutoff_batch_line
         self._batch.result = BatchResult(
             chunk_id=args["chunk_id"],
-            cutoff_raw_line=args["cutoff_raw_line"],
+            cutoff_raw_line=cutoff_source_line,
             n_lines_cleaned=args["n_lines_cleaned"],
             notes=args.get("notes"),
         )
@@ -188,28 +195,28 @@ class BatchMCPServer:
     # -- Validation + file writing --
 
     def _validate_and_write_clean(
-        self, cleaned_text: str, cutoff_raw_line: int, b: _BatchState
+        self, cleaned_text: str, cutoff_batch_line: int, b: _BatchState
     ) -> SubmitCleanResponse:
         errors: list[str] = []
 
-        # Validate cutoff bounds
-        if cutoff_raw_line < b.raw_start:
+        # Validate cutoff bounds (batch-relative, 1-indexed)
+        if cutoff_batch_line < 1:
             errors.append(
-                f"cutoff_raw_line {cutoff_raw_line} is before batch start {b.raw_start}"
+                f"cutoff_batch_line {cutoff_batch_line} must be >= 1"
             )
-        if cutoff_raw_line > b.raw_end:
+        if cutoff_batch_line > b.raw_line_count:
             errors.append(
-                f"cutoff_raw_line {cutoff_raw_line} is after batch end {b.raw_end}"
+                f"cutoff_batch_line {cutoff_batch_line} exceeds batch size {b.raw_line_count}"
             )
 
         if errors:
             return SubmitCleanResponse(valid=False, errors=errors)
 
-        # Validate cleaned text is non-empty
-        cleaned_lines = cleaned_text.splitlines()
-        if len(cleaned_lines) < b.min_clean_lines:
+        # Token-based minimum check instead of line-based
+        cleaned_tokens = approximate_claude_tokens(cleaned_text)
+        if cleaned_tokens < b.min_tokens:
             errors.append(
-                f"Only {len(cleaned_lines)} cleaned lines, minimum is {b.min_clean_lines}"
+                f"Cleaned text is ~{cleaned_tokens} tokens, minimum is ~{b.min_tokens} tokens"
             )
 
         # Run annotation validation
@@ -227,8 +234,8 @@ class BatchMCPServer:
 
         # Build the full clean file: cleaned text + cutoff + raw remainder
         raw_lines = b.raw_content.splitlines(keepends=True)
-        # cutoff_raw_line is 1-indexed source line; batch starts at raw_start (also 1-indexed)
-        cutoff_offset = cutoff_raw_line - b.raw_start
+        # cutoff_batch_line is 1-indexed within the batch
+        cutoff_offset = cutoff_batch_line  # lines 1..N, offset N means we processed lines 1..N
         raw_remainder_lines = raw_lines[cutoff_offset:]
 
         # Ensure cleaned_text ends with newline
@@ -244,6 +251,7 @@ class BatchMCPServer:
 
         # Build context lines for Haiku to verify alignment
         raw_context = raw_lines[max(0, cutoff_offset - 5) : cutoff_offset]
+        cleaned_lines = cleaned_text.splitlines()
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
 
         return SubmitCleanResponse(
@@ -267,19 +275,21 @@ class BatchMCPServer:
         context_text: str,
         known_ids: list[str],
         memory_text: str,
-        min_clean_lines: int,
+        min_tokens: int,
     ) -> None:
+        raw_line_count = len(raw_content.splitlines())
         self._batch = _BatchState(
             batch_num=batch_num,
             raw_content=raw_content,
             chunk_id=chunk_id,
             raw_start=raw_start,
             raw_end=raw_end,
+            raw_line_count=raw_line_count,
             open_stack=open_stack,
             context_text=context_text,
             known_ids=known_ids,
             memory_text=memory_text,
-            min_clean_lines=min_clean_lines,
+            min_tokens=min_tokens,
             result=None,
         )
 

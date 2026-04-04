@@ -18,7 +18,7 @@ class BatchToolsPort(Protocol):
         context_text: str,
         known_ids: list[str],
         memory_text: str,
-        min_clean_lines: int,
+        min_tokens: int,
     ) -> None: ...
 
     def get_result(self) -> BatchResult | None: ...

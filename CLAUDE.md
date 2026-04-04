@@ -17,6 +17,15 @@ When adding a new feature:
 - New orchestration logic → `application/`
 - Never have `ParsingService` import from `adapters/`
 
+## MCP Tools
+
+Haiku uses 3 MCP tools (no built-in Read/Write/Bash):
+- `read_batch` — batch metadata (open nodes, known IDs, context)
+- `submit_clean` — cleaned text + cutoff line → server validates + writes file
+- `submit_result` — structured result (replaces stdout JSON)
+
+The MCP server (`adapters/batch_mcp_server.py`) runs as SSE on localhost, shares StatePort with ParsingService. Raw content is embedded in the prompt, not in tool responses.
+
 ## Commands
 
 ```bash

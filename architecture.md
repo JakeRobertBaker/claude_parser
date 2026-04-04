@@ -53,12 +53,14 @@ src/claude_parser/
 │   ├── protocols.py                    # ContentBase protocol (ordering + truthiness)
 │   ├── annotation_parser.py            # Parse <!-- tree:start/end --> comments from markdown
 │   ├── annotation_tree_builder.py      # Fragment AST builder — handles cross-batch nodes
+│   ├── batch_types.py                  # BatchResult, SubmitCleanResponse dataclasses
 │   └── validator.py                    # Annotation validation (nesting, IDs, proves, deps)
 │
 ├── ports/                              # Driven-side interfaces (Protocol classes)
 │   ├── llm.py                          # LLMPort — invoke(prompt, model, ...) → LLMResult
 │   ├── vcs.py                          # VCSPort — init_repo(), commit_all(message)
-│   └── state.py                        # StatePort — load/save pipeline state + tree
+│   ├── state.py                        # StatePort — load/save pipeline state + tree
+│   └── batch_tools.py                  # BatchToolsPort — MCP tool server lifecycle
 │
 ├── application/                        # Use-case orchestration
 │   ├── parsing_service.py              # ParsingService — single-phase annotation loop
@@ -72,7 +74,8 @@ src/claude_parser/
 ├── adapters/                           # Infrastructure implementations
 │   ├── claude_cli.py                   # LLMPort impl — wraps `claude` CLI via subprocess
 │   ├── git_adapter.py                  # VCSPort impl — wraps `git` CLI via subprocess
-│   └── filesystem_state_store.py       # StatePort impl — state.json + tree.json on disk
+│   ├── filesystem_state_store.py       # StatePort impl — state.json + tree.json on disk
+│   └── batch_mcp_server.py            # BatchToolsPort impl — MCP SSE server with 3 tools
 
 tests/
 ├── test_tree.py                        # Node construction, ordering rules, propagation
@@ -95,12 +98,15 @@ llm         = ClaudeCLIAdapter()
 state_store = FilesystemStateStore(config.state_dir)
 state_store.init()
 vcs         = GitAdapter(config.state_dir)
+batch_tools = BatchMCPServer(state_store, config.state_dir)
+batch_tools.start()
 
 service = ParsingService(
     config=config,
     llm=llm,               # ...into LLMPort
     state=state_store,      # ...into StatePort
     vcs=vcs,                # ...into VCSPort
+    batch_tools=batch_tools # ...into BatchToolsPort
 )
 ```
 
@@ -109,17 +115,22 @@ service = ParsingService(
 ## End-to-End Flow
 
 ```
-CLI  →  creates adapters, injects into ParsingService
-     →  calls service.run()
+CLI  →  creates adapters (LLM, State, VCS, BatchMCPServer)
+     →  starts MCP server (SSE on localhost)
+     →  injects into ParsingService, calls service.run()
 
 Main Loop (per batch):
         → load state + tree (or initialize if first run)
-        → compute batch end (token-based: ~4 chars/token)
+        → compute batch end (token-based via tiktoken)
         → write raw_i.md (batch of raw lines)
-        → build annotation prompt (with open_stack, context, memory)
-        → llm.invoke(tools=["Write", "Bash"])
-        → Haiku writes clean_i.md (cleaned + annotated markdown)
-        → Haiku calls validator via Bash, fixes issues
+        → setup MCP server state (raw content, open_stack, known_ids, etc.)
+        → build prompt (raw content embedded + MCP tool instructions)
+        → llm.invoke(mcp_config_path=...) with --system-prompt, --tools "", --strict-mcp-config
+        → Haiku calls read_batch (metadata: open nodes, known IDs, context)
+        → Haiku calls submit_clean (cleaned text + cutoff line)
+            → server validates annotations, writes clean_i.md with cutoff + raw remainder
+        → Haiku calls submit_result (structured metadata)
+        → service reads result from MCP server
         → service parses annotations from clean_i.md
         → service-side validation (backup check)
         → process_batch_annotations() builds/extends domain tree
@@ -127,6 +138,7 @@ Main Loop (per batch):
         → save state + tree → git commit
 
 Final:  → concatenate clean_i.md[before cutoff] → final.md
+     →  stop MCP server
 ```
 
 ## Annotation Format
@@ -155,5 +167,16 @@ A **port** is a socket — it defines what shape plugs in. An **adapter** is the
 | `LLMPort`              | `ClaudeCLIAdapter`         | Claude CLI subprocess         |
 | `VCSPort`              | `GitAdapter`               | Git CLI subprocess            |
 | `StatePort`            | `FilesystemStateStore`     | state.json + tree.json on disk|
+| `BatchToolsPort`       | `BatchMCPServer`           | MCP SSE server (read/submit)  |
 
-Tomorrow you could write `OpenAIAdapter` for `LLMPort` or `NoOpVCSAdapter` for dry runs — same ports, different adapters. The application layer wouldn't change.
+Tomorrow you could write `OpenAIAdapter` for `LLMPort`, `OpenCodeMCPAdapter` for `BatchToolsPort`, or `NoOpVCSAdapter` for dry runs — same ports, different adapters. The application layer wouldn't change.
+
+## MCP Tools
+
+Haiku interacts with three MCP tools instead of built-in Read/Write/Bash:
+
+- **`read_batch`** — Returns batch metadata (chunk_id, open_stack, known_ids, context). Raw content is in the prompt.
+- **`submit_clean(cleaned_text, cutoff_batch_line)`** — Submits cleaned markdown. Server validates annotations (token-based minimum, not line-based), appends cutoff marker + raw remainder, writes clean file. Returns validation result + alignment context.
+- **`submit_result(chunk_id, cutoff_batch_line, n_lines_cleaned, notes)`** — Submits structured result. Replaces stdout JSON parsing.
+
+The MCP server runs as an SSE server in a background thread, sharing StatePort with ParsingService. Claude CLI connects via `--mcp-config` with `--system-prompt` (overrides default to skip memory/CLAUDE.md), `--tools ""` (no built-in tools), and `--strict-mcp-config`.

@@ -1,0 +1,13 @@
+There are currently some issues I can see.
+
+The run _run_main_loop still operates on while `pipeline_state.next_start_line < total_lines`. I think it will me cleaner if we have the equivalent of while self.state.complete = False. Also `sections_completed = 0` should instead be accessed by state.sections completed.
+
+Also should items like `pipeline_state.next_start_line` now just be accessed via self.state. Hence the MCP and parsing service are talking once to the same thing?
+
+Fundamentally we see validation checks on n lines. Claude Haiku will often put many lines in in one paragraph into a single line. Therefore `len(cleaned_lines) < b.min_clean_lines` may be raising issues when we are actually fine. I think we should switch to token checks.
+
+Look at the chat logs, `/home/jake/ai_tool_development/knowledge_prasing/claude_chat_log/integration_test/invoke_0.json`, we see repeated tries with the validation. Do you see these and other issues?
+
+We also see `cutoff_raw_line` is `relative to the full source file, not the batch.`. Is this the best way given that Haiku at the time can only see it's current batch? Is it easier for it to just work with the line number of the batch it has access to?
+
+
