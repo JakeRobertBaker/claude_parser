@@ -15,9 +15,9 @@ Adapters     — infrastructure implementations of ports
 
 **Ports** are Python `Protocol` classes — they define the *shape* of a connection (like a USB socket on a laptop). The application layer programs against these abstractions without knowing what's plugged in.
 
-**Adapters** are the cables/dongles that connect specific infrastructure to those sockets. `ClaudeCLIAdapter` plugs the Claude CLI into `LLMPort`. `GitAdapter` plugs Git into `VCSPort`. You could swap either without touching the application layer.
+**Adapters** are the cables/dongles that connect specific infrastructure to those sockets. `ClaudeCLIAdapter` plugs the Claude CLI into `LLMPort`. `FilesystemStateStore` plugs the filesystem (+ git) into `StatePort`. You could swap either without touching the application layer.
 
-**Application** sits between domain and adapters. It orchestrates: "load the tree, call the LLM, merge the result, save state, commit." It knows *what* to do but not *how* infrastructure works — that's delegated through ports.
+**Application** sits between domain and adapters. It orchestrates: "get next batch, call the LLM, parse annotations, build tree, advance state." It knows *what* to do but not *how* infrastructure works — that's delegated through ports.
 
 The **CLI** (`cli.py`) is the **composition root** — the one place where all layers meet to wire adapters into ports. This is the only file that imports concrete adapter classes.
 
@@ -43,7 +43,7 @@ cli.py → adapters/ → application/ → ports/ → domain/
 src/claude_parser/
 ├── cli.py                              # Composition root: wires adapters into ports
 ├── config.py                           # ParserConfig dataclass
-├── validator_cli.py                    # CLI for annotation validator (invoked by Haiku via Bash)
+├── validator_cli.py                    # CLI for annotation validator (manual use)
 │
 ├── domain/                             # Pure business logic, ZERO external deps
 │   ├── node.py                         # Node, TreeDict, NodeType — core tree entities
@@ -53,18 +53,15 @@ src/claude_parser/
 │   ├── protocols.py                    # ContentBase protocol (ordering + truthiness)
 │   ├── annotation_parser.py            # Parse <!-- tree:start/end --> comments from markdown
 │   ├── annotation_tree_builder.py      # Fragment AST builder — handles cross-batch nodes
-│   ├── batch_types.py                  # BatchResult, SubmitCleanResponse dataclasses
 │   └── validator.py                    # Annotation validation (nesting, IDs, proves, deps)
 │
 ├── ports/                              # Driven-side interfaces (Protocol classes)
 │   ├── llm.py                          # LLMPort — invoke(prompt, model, ...) → LLMResult
-│   ├── vcs.py                          # VCSPort — init_repo(), commit_all(message)
-│   ├── state.py                        # StatePort — load/save pipeline state + tree
+│   ├── state.py                        # StatePort — batch progression, tree access, persistence
 │   └── batch_tools.py                  # BatchToolsPort — MCP tool server lifecycle
 │
 ├── application/                        # Use-case orchestration
-│   ├── parsing_service.py              # ParsingService — single-phase annotation loop
-│   ├── pipeline_state.py               # PipelineState dataclass (batch-to-batch state)
+│   ├── parsing_service.py              # ParsingService — pure orchestration loop
 │   ├── merge.py                        # Legacy chunk merging (kept for reference)
 │   ├── serialization.py                # Tree ↔ dict serialization (used by service + adapters)
 │   ├── llm_response_parser.py          # Extract JSON from Claude's stream-json output
@@ -73,8 +70,7 @@ src/claude_parser/
 │
 ├── adapters/                           # Infrastructure implementations
 │   ├── claude_cli.py                   # LLMPort impl — wraps `claude` CLI via subprocess
-│   ├── git_adapter.py                  # VCSPort impl — wraps `git` CLI via subprocess
-│   ├── filesystem_state_store.py       # StatePort impl — state.json + tree.json on disk
+│   ├── filesystem_state_store.py       # StatePort impl — state.json + tree.json + git on disk
 │   └── batch_mcp_server.py            # BatchToolsPort impl — MCP SSE server with 3 tools
 
 tests/
@@ -94,10 +90,10 @@ The CLI creates concrete adapters and injects them into the service via port-typ
 
 ```python
 # cli.py — the only place that knows which adapter goes in which port
-llm         = ClaudeCLIAdapter()
-state_store = FilesystemStateStore(config.state_dir)
+state_store = FilesystemStateStore(config.state_dir, config.raw_path, config.resume)
 state_store.init()
-vcs         = GitAdapter(config.state_dir)
+
+llm         = ClaudeCLIAdapter()
 batch_tools = BatchMCPServer(state_store, config.state_dir)
 batch_tools.start()
 
@@ -105,39 +101,34 @@ service = ParsingService(
     config=config,
     llm=llm,               # ...into LLMPort
     state=state_store,      # ...into StatePort
-    vcs=vcs,                # ...into VCSPort
     batch_tools=batch_tools # ...into BatchToolsPort
 )
 ```
 
-`ParsingService` only sees the port shapes. It calls `self.llm.invoke(...)`, `self.state.save_tree(root)`, etc. — never knowing whether it's talking to Claude, a mock, or something else entirely.
+`ParsingService` only sees the port shapes. It calls `self.state.prepare_next(...)`, `self.llm.invoke(...)`, `self.state.advance(fragment)` — never knowing whether it's talking to Claude, a mock, or something else entirely. No data objects flow between state and batch_tools — they share a reference and communicate directly. State owns all progression logic (line tracking, batch computation, tree persistence, git commit). The service does pure orchestration: prepare → invoke LLM → run domain logic → advance.
 
 ## End-to-End Flow
 
 ```
-CLI  →  creates adapters (LLM, State, VCS, BatchMCPServer)
+CLI  →  creates adapters (State, LLM, BatchMCPServer)
+     →  state.init() loads raw file + resumes saved progress
      →  starts MCP server (SSE on localhost)
      →  injects into ParsingService, calls service.run()
 
-Main Loop (per batch):
-        → load state + tree (or initialize if first run)
-        → compute batch end (token-based via tiktoken)
-        → write raw_i.md (batch of raw lines)
-        → setup MCP server state (raw content, open_stack, known_ids, etc.)
-        → build prompt (raw content embedded + MCP tool instructions)
-        → llm.invoke(mcp_config_path=...) with --system-prompt, --tools "", --strict-mcp-config
-        → Haiku calls read_batch (metadata: open nodes, known IDs, context)
+Main Loop:  while not state.complete
+        → state.prepare_next(batch_tokens, context_lines)
+        → batch_tools.prepare()  (reads from shared state — no args)
+        → llm.invoke(mcp_config_path=...)
+        → Haiku calls read_batch (raw content + metadata from state)
         → Haiku calls submit_clean (cleaned text + cutoff line)
-            → server validates annotations, writes clean_i.md with cutoff + raw remainder
-        → Haiku calls submit_result (structured metadata)
-        → service reads result from MCP server
-        → service parses annotations from clean_i.md
-        → service-side validation (backup check)
-        → process_batch_annotations() builds/extends domain tree
-        → update PipelineState (open_stack, pending_edges)
-        → save state + tree → git commit
+            → server validates, writes clean file, reports unclosed nodes
+        → Haiku calls submit_result → MCP server writes cutoff to state
+        → service checks batch_tools.succeeded()
+        → service reads clean file, runs domain logic:
+            → parse_annotations → validate_annotations → process_batch_annotations
+        → state.advance(fragment) — uses stored cutoff, saves state + tree, commits
 
-Final:  → concatenate clean_i.md[before cutoff] → final.md
+Final:  → concatenate clean files → final.md
      →  stop MCP server
 ```
 
@@ -165,18 +156,19 @@ A **port** is a socket — it defines what shape plugs in. An **adapter** is the
 | Port (socket)          | Adapter (dongle)           | What it connects              |
 |------------------------|----------------------------|-------------------------------|
 | `LLMPort`              | `ClaudeCLIAdapter`         | Claude CLI subprocess         |
-| `VCSPort`              | `GitAdapter`               | Git CLI subprocess            |
-| `StatePort`            | `FilesystemStateStore`     | state.json + tree.json on disk|
+| `StatePort`            | `FilesystemStateStore`     | state.json + tree.json + git  |
 | `BatchToolsPort`       | `BatchMCPServer`           | MCP SSE server (read/submit)  |
 
-Tomorrow you could write `OpenAIAdapter` for `LLMPort`, `OpenCodeMCPAdapter` for `BatchToolsPort`, or `NoOpVCSAdapter` for dry runs — same ports, different adapters. The application layer wouldn't change.
+Tomorrow you could write `OpenAIAdapter` for `LLMPort`, `OpenCodeMCPAdapter` for `BatchToolsPort`, or `MemoryStateStore` for testing — same ports, different adapters. The application layer wouldn't change.
 
 ## MCP Tools
 
 Haiku interacts with three MCP tools instead of built-in Read/Write/Bash:
 
-- **`read_batch`** — Returns batch metadata (chunk_id, open_stack, known_ids, context). Raw content is in the prompt.
-- **`submit_clean(cleaned_text, cutoff_batch_line)`** — Submits cleaned markdown. Server validates annotations (token-based minimum, not line-based), appends cutoff marker + raw remainder, writes clean file. Returns validation result + alignment context.
+- **`read_batch`** — Returns raw content + batch metadata (chunk_id, open_stack, known_ids, previous_batch_tail). Uses `_meta.anthropic.maxResultSizeChars: 500000` to avoid truncation.
+- **`submit_clean(cleaned_text, cutoff_batch_line)`** — Submits cleaned markdown. Server validates annotations (token-based soft minimum at 50%), appends cutoff marker + raw remainder, writes clean file. Returns validation result + alignment context + unclosed node info.
 - **`submit_result(chunk_id, cutoff_batch_line, n_lines_cleaned, notes)`** — Submits structured result. Replaces stdout JSON parsing.
+
+Open nodes across batches are supported — Haiku can leave nodes unclosed at cutoff. The open_stack carries them to the next batch. The token minimum is a soft warning, not a hard error.
 
 The MCP server runs as an SSE server in a background thread, sharing StatePort with ParsingService. Claude CLI connects via `--mcp-config` with `--system-prompt` (overrides default to skip memory/CLAUDE.md), `--tools ""` (no built-in tools), and `--strict-mcp-config`.

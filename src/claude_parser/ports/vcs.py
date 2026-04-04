@@ -1,6 +1,0 @@
-from typing import Protocol
-
-
-class VCSPort(Protocol):
-    def init_repo(self) -> None: ...
-    def commit_all(self, message: str) -> None: ...

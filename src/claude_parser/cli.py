@@ -5,7 +5,6 @@ import sys
 from claude_parser.adapters.batch_mcp_server import BatchMCPServer
 from claude_parser.adapters.claude_cli import ClaudeCLIAdapter
 from claude_parser.adapters.filesystem_state_store import FilesystemStateStore
-from claude_parser.adapters.git_adapter import GitAdapter
 from claude_parser.application.parsing_service import ParsingService
 from claude_parser.config import ParserConfig
 
@@ -86,12 +85,15 @@ def main() -> None:
         max_sections=args.max_sections,
     )
 
-    llm = ClaudeCLIAdapter()
-    state_store = FilesystemStateStore(config.state_dir)
+    state_store = FilesystemStateStore(
+        state_dir=config.state_dir,
+        raw_path=config.raw_path,
+        resume=config.resume,
+    )
     state_store.init()
-    vcs = GitAdapter(config.state_dir)
-    batch_tools = BatchMCPServer(state_store, config.state_dir)
 
+    llm = ClaudeCLIAdapter()
+    batch_tools = BatchMCPServer(state_store, config.state_dir)
     batch_tools.start()
 
     try:
@@ -99,7 +101,6 @@ def main() -> None:
             config=config,
             llm=llm,
             state=state_store,
-            vcs=vcs,
             batch_tools=batch_tools,
         )
         service.run()

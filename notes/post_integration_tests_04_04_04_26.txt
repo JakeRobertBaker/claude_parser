@@ -1,0 +1,21 @@
+## Inspection of results in `<!-- tree:end id="ch01" -->`
+There is a problem with cutoff. Maybe the 60% is too strict. Natural Cutoff between Lemma 1.6 statement and proof. However clean_0.md has `<!-- tree:end id="proof_1_6" -->` before the proof of if (vii). We also see the `<!-- tree:end id="ch01" -->` just after that line. Is validation forcing this or did Haiku decide this? Does validation permit a fragmented tree where we are allowed to lose nodes in the next batch?
+
+In fact in `/home/jake/ai_tool_development/knowledge_prasing/claude_chat_log/mcp_test_2/invoke_1.json` we can actually Haiku speculate that this is an error.
+
+Potential ways around:
+- allow Haiku to cutoff earlier if it really wants to.
+- allow Haiku to submit trees with open nodes as long as it acknowledges it will be closed in the next batch
+
+Therefore in this example Haiku could either cutoff earlier or cutoff mid proof but do not close the proof and chapter nodes.
+
+Another issue we can see in this log is that it is not very clear what read_bath context actually is. It is not more context information it is just the end of the last batch. We can see `mcp_test_2/invoke_0.json` call empty context since it is the first batch.
+
+## More fundamental Questions
+Would we prefer to have multiple batches or pagination per single invocation to avoid repeat setup and tool info messages. Or am I mistaken since a long claude session resubmits the entire history each time a further claude query is made?
+
+## More potential ideas
+I am wondering if we want to fundamentally rethink some of this. 
+
+## Parsing Service Improvements
+I think fundamentally there should be state with all the methods. The MCP server is how Haiku can talk to those state methods. I think we should remove VCS entirely, if a particular StatePort like FilesystemStateStore want's version control then that should be up to the adapter.

@@ -1,7 +1,8 @@
 """MCP server providing batch processing tools for Haiku.
 
 Tools: read_batch, submit_clean, submit_result.
-Runs as an SSE server in a background thread, sharing state with ParsingService.
+Runs as an SSE server in a background thread. Reads batch data from the
+shared FilesystemStateStore — no intermediate objects passed through the service.
 """
 
 from __future__ import annotations
@@ -23,32 +24,21 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Mount, Route
 
+from claude_parser.adapters.filesystem_state_store import FilesystemStateStore
 from claude_parser.application.tokens import approximate_claude_tokens
 from claude_parser.domain.annotation_parser import parse_annotations
-from claude_parser.domain.batch_types import BatchResult, SubmitCleanResponse
 from claude_parser.domain.validator import validate_annotations
-from claude_parser.ports.state import StatePort
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _BatchState:
-    """Mutable state for the current batch, set by ParsingService before each invocation."""
-
-    batch_num: int = 0
-    raw_content: str = ""
-    chunk_id: str = ""
-    raw_start: int = 0  # 0-indexed start in source file
-    raw_end: int = 0  # line count end in source file
-    raw_line_count: int = 0  # number of lines in this batch
-    open_stack: list[str] = field(default_factory=list)
-    context_text: str = ""
-    known_ids: list[str] = field(default_factory=list)
-    memory_text: str = ""
-    min_tokens: int = 0  # minimum tokens of cleaned text (60% of raw batch tokens)
-    # Written by submit_result tool
-    result: BatchResult | None = None
+class _SubmitCleanResponse:
+    valid: bool
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    raw_context_lines: list[str] = field(default_factory=list)
+    clean_tail_lines: list[str] = field(default_factory=list)
 
 
 def _find_free_port() -> int:
@@ -60,22 +50,20 @@ def _find_free_port() -> int:
 class BatchMCPServer:
     """MCP server with read_batch, submit_clean, submit_result tools.
 
-    Runs an SSE server in a background thread. ParsingService calls
-    setup_batch() before each LLM invocation, then get_result() after.
+    Reads batch data directly from the shared FilesystemStateStore.
+    ParsingService calls prepare() before each LLM invocation,
+    then succeeded() after.
     """
 
-    def __init__(self, state_store: StatePort, state_dir: str):
+    def __init__(self, state_store: FilesystemStateStore, state_dir: str):
         self._state_store = state_store
         self._state_dir = os.path.abspath(state_dir)
-        self._batch = _BatchState()
+        self._submitted: bool = False
         self._port = _find_free_port()
         self._thread: threading.Thread | None = None
-        self._uvicorn_server: Any = None  # uvicorn.Server, set in _run_server
+        self._uvicorn_server: Any = None
 
-        # Build MCP config file path
         self._mcp_config_file = os.path.join(self._state_dir, "mcp_config.json")
-
-        # Build the MCP server
         self._mcp_server = Server("batch_tools")
         self._register_tools()
 
@@ -88,10 +76,11 @@ class BatchMCPServer:
                 mcp_types.Tool(
                     name="read_batch",
                     description=(
-                        "Read batch metadata: chunk_id, open nodes, context, known IDs. "
-                        "The raw content is already in the prompt — this provides the structural context."
+                        "Read the raw text and batch metadata: chunk_id, open nodes, "
+                        "context, known IDs. Returns everything needed for this batch."
                     ),
                     inputSchema={"type": "object", "properties": {}},
+                    meta={"anthropic": {"maxResultSizeChars": 500000}},
                 ),
                 mcp_types.Tool(
                     name="submit_clean",
@@ -151,26 +140,28 @@ class BatchMCPServer:
             else:
                 return [mcp_types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
-    # -- Tool handlers (sync, called from async context) --
+    # -- Tool handlers --
 
     def _handle_read_batch(self) -> list[mcp_types.TextContent]:
-        b = self._batch
+        s = self._state_store
         data = {
-            "chunk_id": b.chunk_id,
-            "batch_line_count": b.raw_line_count,
-            "open_stack": b.open_stack,
-            "context_text": b.context_text,
-            "known_ids": b.known_ids,
-            "memory_text": b.memory_text,
+            "chunk_id": s.current_id,
+            "raw_content": s.current_raw_content,
+            "batch_line_count": s.current_raw_line_count,
+            "raw_start": s.current_raw_start + 1,  # 1-indexed for display
+            "raw_end": s.current_raw_end,
+            "open_stack": s.open_stack,
+            "previous_batch_tail": s.current_context_text,
+            "known_ids": s.current_known_ids,
+            "memory_text": s.current_memory_text,
         }
         return [mcp_types.TextContent(type="text", text=json.dumps(data, ensure_ascii=False))]
 
     def _handle_submit_clean(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
         cleaned_text: str = args["cleaned_text"]
         cutoff_batch_line: int = args["cutoff_batch_line"]
-        b = self._batch
 
-        response = self._validate_and_write_clean(cleaned_text, cutoff_batch_line, b)
+        response = self._validate_and_write_clean(cleaned_text, cutoff_batch_line)
         data = {
             "valid": response.valid,
             "errors": response.errors,
@@ -182,126 +173,93 @@ class BatchMCPServer:
 
     def _handle_submit_result(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
         cutoff_batch_line: int = args["cutoff_batch_line"]
-        # Convert batch-relative to source-relative for ParsingService
-        cutoff_source_line = self._batch.raw_start + cutoff_batch_line
-        self._batch.result = BatchResult(
-            chunk_id=args["chunk_id"],
-            cutoff_raw_line=cutoff_source_line,
-            n_lines_cleaned=args["n_lines_cleaned"],
-            notes=args.get("notes"),
-        )
+        # Convert batch-relative to source-relative, write to state
+        source_line = self._state_store.current_raw_start + cutoff_batch_line
+        self._state_store.set_cutoff(source_line)
+        self._submitted = True
         return [mcp_types.TextContent(type="text", text='{"status": "ok"}')]
 
     # -- Validation + file writing --
 
     def _validate_and_write_clean(
-        self, cleaned_text: str, cutoff_batch_line: int, b: _BatchState
-    ) -> SubmitCleanResponse:
+        self, cleaned_text: str, cutoff_batch_line: int
+    ) -> _SubmitCleanResponse:
+        s = self._state_store
         errors: list[str] = []
 
-        # Validate cutoff bounds (batch-relative, 1-indexed)
         if cutoff_batch_line < 1:
+            errors.append(f"cutoff_batch_line {cutoff_batch_line} must be >= 1")
+        if cutoff_batch_line > s.current_raw_line_count:
             errors.append(
-                f"cutoff_batch_line {cutoff_batch_line} must be >= 1"
-            )
-        if cutoff_batch_line > b.raw_line_count:
-            errors.append(
-                f"cutoff_batch_line {cutoff_batch_line} exceeds batch size {b.raw_line_count}"
+                f"cutoff_batch_line {cutoff_batch_line} exceeds batch size {s.current_raw_line_count}"
             )
 
         if errors:
-            return SubmitCleanResponse(valid=False, errors=errors)
+            return _SubmitCleanResponse(valid=False, errors=errors)
 
-        # Token-based minimum check instead of line-based
+        warnings: list[str] = []
         cleaned_tokens = approximate_claude_tokens(cleaned_text)
-        if cleaned_tokens < b.min_tokens:
-            errors.append(
-                f"Cleaned text is ~{cleaned_tokens} tokens, minimum is ~{b.min_tokens} tokens"
+        if cleaned_tokens < s.current_min_tokens:
+            warnings.append(
+                f"Cleaned text is ~{cleaned_tokens} tokens, suggested minimum is ~{s.current_min_tokens} tokens "
+                f"(this is a soft warning, not an error)"
             )
 
-        # Run annotation validation
         events = parse_annotations(cleaned_text)
-        known = set(b.known_ids)
+        known = set(s.current_known_ids)
         validation = validate_annotations(events, known_ids=known)
         errors.extend(validation.errors)
+        warnings.extend(validation.warnings)
 
         if errors:
-            return SubmitCleanResponse(
-                valid=False,
-                errors=errors,
-                warnings=validation.warnings,
-            )
+            return _SubmitCleanResponse(valid=False, errors=errors, warnings=warnings)
 
-        # Build the full clean file: cleaned text + cutoff + raw remainder
-        raw_lines = b.raw_content.splitlines(keepends=True)
-        # cutoff_batch_line is 1-indexed within the batch
-        cutoff_offset = cutoff_batch_line  # lines 1..N, offset N means we processed lines 1..N
+        # Build full clean file: cleaned text + cutoff + raw remainder
+        raw_lines = s.current_raw_content.splitlines(keepends=True)
+        cutoff_offset = cutoff_batch_line
         raw_remainder_lines = raw_lines[cutoff_offset:]
 
-        # Ensure cleaned_text ends with newline
         if cleaned_text and not cleaned_text.endswith("\n"):
             cleaned_text += "\n"
 
         full_content = cleaned_text + "<!-- cutoff -->\n" + "".join(raw_remainder_lines)
+        s.write_clean_batch(full_content)
 
-        # Write the clean file
-        clean_path = self._state_store.resolve_clean_path(b.batch_num)
-        with open(clean_path, "w", encoding="utf-8") as f:
-            f.write(full_content)
+        # Report unclosed nodes
+        stack: list[str] = []
+        for event in events:
+            if event.event_type == "start":
+                stack.append(event.id)
+            elif event.event_type == "end" and stack and stack[-1] == event.id:
+                stack.pop()
+        if stack:
+            warnings.append(f"Unclosed nodes will carry to next batch: {list(stack)}")
 
-        # Build context lines for Haiku to verify alignment
         raw_context = raw_lines[max(0, cutoff_offset - 5) : cutoff_offset]
         cleaned_lines = cleaned_text.splitlines()
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
 
-        return SubmitCleanResponse(
+        return _SubmitCleanResponse(
             valid=True,
             errors=[],
-            warnings=validation.warnings,
+            warnings=warnings,
             raw_context_lines=[line.rstrip("\n") for line in raw_context],
             clean_tail_lines=clean_tail,
         )
 
     # -- Public API for ParsingService --
 
-    def setup_batch(
-        self,
-        batch_num: int,
-        raw_content: str,
-        chunk_id: str,
-        raw_start: int,
-        raw_end: int,
-        open_stack: list[str],
-        context_text: str,
-        known_ids: list[str],
-        memory_text: str,
-        min_tokens: int,
-    ) -> None:
-        raw_line_count = len(raw_content.splitlines())
-        self._batch = _BatchState(
-            batch_num=batch_num,
-            raw_content=raw_content,
-            chunk_id=chunk_id,
-            raw_start=raw_start,
-            raw_end=raw_end,
-            raw_line_count=raw_line_count,
-            open_stack=open_stack,
-            context_text=context_text,
-            known_ids=known_ids,
-            memory_text=memory_text,
-            min_tokens=min_tokens,
-            result=None,
-        )
+    def prepare(self) -> None:
+        self._submitted = False
 
-    def get_result(self) -> BatchResult | None:
-        return self._batch.result
+    def succeeded(self) -> bool:
+        return self._submitted
 
     @property
     def mcp_config_path(self) -> str:
         return self._mcp_config_file
 
     def start(self) -> None:
-        """Start the SSE server in a background thread."""
         self._write_mcp_config()
         self._thread = threading.Thread(target=self._run_server, daemon=True)
         self._thread.start()
@@ -309,7 +267,6 @@ class BatchMCPServer:
         logger.info("MCP server started on port %d", self._port)
 
     def _wait_for_port(self, timeout: float = 10.0) -> None:
-        """Poll until the server is accepting connections."""
         import time
 
         deadline = time.monotonic() + timeout
@@ -322,7 +279,6 @@ class BatchMCPServer:
         raise RuntimeError(f"MCP server did not start within {timeout}s")
 
     def stop(self) -> None:
-        """Stop the SSE server."""
         if self._uvicorn_server is not None:
             self._uvicorn_server.should_exit = True
         if self._thread is not None:
@@ -342,7 +298,6 @@ class BatchMCPServer:
             json.dump(config, f, indent=2)
 
     def _run_server(self) -> None:
-        """Run the SSE server (called in background thread)."""
         import uvicorn
 
         sse_transport = SseServerTransport("/messages/")
@@ -367,10 +322,7 @@ class BatchMCPServer:
         )
 
         config = uvicorn.Config(
-            app,
-            host="127.0.0.1",
-            port=self._port,
-            log_level="warning",
+            app, host="127.0.0.1", port=self._port, log_level="warning",
         )
         server = uvicorn.Server(config)
         self._uvicorn_server = server
