@@ -233,16 +233,6 @@ class ParsingService:
 
         logger.info("Main loop complete.")
 
-    def _old_compute_batch_end(self, raw_lines: list[str], start: int) -> int:
-        """Walk lines from start, estimating ~4 chars/token, return end index."""
-        char_budget = self.config.batch_tokens * _CHARS_PER_TOKEN
-        chars = 0
-        for i in range(start, len(raw_lines)):
-            chars += len(raw_lines[i])
-            if chars >= char_budget:
-                return i + 1
-        return len(raw_lines)
-
     def _compute_batch_end(self, raw_lines: list[str], start: int) -> int:
         tokens = 0
         raw_lines

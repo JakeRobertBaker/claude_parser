@@ -1,0 +1,52 @@
+This project cleans and annotates markdown files.
+
+Understand this project, CLAUDE.md, architecture.md are helpful.
+
+Yesterday I ran `uv run python -m claude_parser.cli --raw raw/companion_to_analysis.md --state ~/ai_tool_development/knowledge_prasing/attempt_states/full_attempt_2 --timeout 600`.
+
+I exported the full "claude -p ... " logs to `/home/jake/ai_tool_development/knowledge_prasing/claude_chat_log` from the times ClaudeCLIAdapter was invoked in src/claude_parser/application/parsing_service.py   ParsingService 󰊕 _run_main_loop.
+
+It looks okay with some issues.
+
+Memory Issue:
+We can see `check the project memory to understand the context better.` causing READ `/home/jake/.claude/projects/-home-jake-ai-tool-development-knowledge-prasing-claude-parser/memory/MEMORY.md`. This is probably due to the uv command being run in this claude_parser/ dir. However we do not have a MEMORY.md for this task here. Therefore time and tokens are wasted. We either want to prevent claude code from being able to do this. Or have a MEMORY.md that we have pre written. However we should really have provided all context in our prompt template. Can you carefully decide how best to proceed whilst keeping in mind we will later make an OpenCodeCLI Adapter so we should not be too coupled to claude code.
+
+Cutoff Issues - 60% threshold:
+Currently finding a cutoff in after 60% of the batch can cause issues. See `claude_chat_log/invoke_0.json`, `That would take us well into the proof of Lemma 1.6.` shows it struggle to find a sensible cutoff in this window. In fact `attempt_states/full_attempt_2/clean/clean_0.md` has cutoff before part (vi) of the proof.
+
+The current 8000 token limit for each batch is due to Claude Haiku's READ file tool has a limit of 10,000 tokens.
+
+Cutoff Issues - Validation:
+We then see the Haiku spend a few tries trying to pass cutoff validation. This appears to follow from the previous cutoff issue too. See `Let me fix this by removing trailing blank lines from the cleaned file.` in `invoke_0.json`.
+
+Currently we do validate on post cutoff clean_i, raw_i md files being identical.
+
+Fundamentally we should not be super fussed by post cutoff since it is not used. This validation was really done to enforce consistent cutoff line numbers with the batching with the raw files.
+
+Other issues:
+Can you see any other worrying issues in the logs?
+
+Proposed Solution:
+I think we need to move to a set of tools, I assume this will be via MCP.
+This has already been considered in the past. Currently the StatePort methods are called in ParsingService. However the actions that Haiku does via read and write are coupled with FilesystemStateStore's conventions and file names. The solution to this would have been tools.
+
+Having a tool would also address these cutoff issues. A MCP with read_state, submit_cutoff, write_state, validate_state, commit_state (or something like this - we would need to carefully decide how we do write/validate/commit) would be able to have a read token limit of more than 10k. 
+
+All Haiku needs to do then is pick the cutoff and submit it's cleaned proposal up to cutoff (no wasted effort on post cutoff alignment).
+
+We also see Haiku read some incorrect file names in the logs. These tools would handle that.
+
+To ensure that Haiku does clean up to it's specified cutoff maybe the validator tool can present the last few lines or tokens of the raw text and the clean text and ask Haiku for final approval.
+
+When we design these tools can we make sure we fully understand how Haiku read and write currently works. When Haiku re writes clean_i.md, e.g. after failed validation, how does it rewrite? Does it cp the old file and make an edit or is it all in context and it just does another write. We will want tools to allow Haiku to work without excess effort issues.
+
+Also, I am concerned that stdout can be unreliable for with claude -p. I think it would be better to have the items of stdout submitted at the end via some kind of commit/submit tool in our mcp.
+
+I think we will need to carefully consider where the wiring to setup this MCP occurs? Do we want this MCP to use the same StatePort that parsing ParsingService uses? Therefore our state is accessed via the same consistent fundamental methods.
+
+Let's plan and then implement. Ask me any concerns or uncertainties. Do not make assumptions.
+
+Once changes are made:
+- do `uv run ty check src/ tests/`, `uv run ruff check src/ tests/` `uv run pytest tests/`
+- you may want to update CLAUDE.md and architecture.md.
+- ensures in integration test works ``uv run python -m claude_parser.cli --raw raw/companion_to_analysis.md --state ~/ai_tool_development/knowledge_prasing/attempt_states/full_attempt_i --timeout 600`. Be careful to ensure you are writing to a new dir.
