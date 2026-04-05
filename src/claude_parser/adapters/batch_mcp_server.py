@@ -8,6 +8,7 @@ shared FilesystemStateStore — no intermediate objects passed through the servi
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import os
@@ -38,8 +39,11 @@ class _SubmitCleanResponse:
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    raw_context_lines: list[str] = field(default_factory=list)
-    clean_tail_lines: list[str] = field(default_factory=list)
+    inferred_cutoff_batch_line: int | None = None
+    match_confidence: float | None = None
+    raw_context_around_cutoff: list[str] = field(default_factory=list)
+    cleaned_tail_lines: list[str] = field(default_factory=list)
+    unclosed_nodes: list[str] = field(default_factory=list)
 
 
 _WORD_RE = re.compile(r"[a-z]{4,}")
@@ -59,41 +63,43 @@ def _content_tokens(text: str) -> list[str]:
     return _WORD_RE.findall(text.lower())
 
 
-def _check_cutoff_alignment(
-    cleaned_text: str,
-    raw_lines: list[str],
-    cutoff_batch_line: int,
-    window_before: int = 30,
-    window_after: int = 5,
-) -> str | None:
-    """Verify cleaned_text's trailing content appears near cutoff_batch_line.
+def _infer_cutoff_line(
+    cleaned_text: str, raw_lines: list[str]
+) -> tuple[int, float] | None:
+    """Infer the raw cutoff line from cleaned_text via token-sequence alignment.
 
-    Returns an error string if misaligned, or None if aligned / check skipped.
+    Uses difflib.SequenceMatcher on content-token sequences to find where the
+    cleaned content ends within the raw batch. Robust to repeated phrases
+    because it maximizes global alignment, not per-window overlap.
+
+    Returns (cutoff_line_1indexed, confidence) where confidence is the
+    fraction of cleaned tokens that aligned to raw. Returns None if cleaned
+    text is too short to align reliably.
     """
-    tail = _content_tokens(cleaned_text)
-    if len(tail) < 6:
-        return None  # too short to verify reliably
-    tail_tokens = tail[-8:]
-
-    cutoff_idx = cutoff_batch_line - 1
-    start = max(0, cutoff_idx - window_before)
-    end = min(len(raw_lines), cutoff_idx + 1 + window_after)
-    raw_window_text = "".join(raw_lines[start:end])
-    raw_window_tokens = set(_content_tokens(raw_window_text))
-
-    overlap = sum(1 for t in tail_tokens if t in raw_window_tokens)
-    if overlap >= 4:
+    cleaned_toks = _content_tokens(cleaned_text)
+    if len(cleaned_toks) < 20:
         return None
 
-    return (
-        f"Cutoff alignment check failed: your cleaned_text ends with words "
-        f"{tail_tokens}, but only {overlap}/8 of these appear in raw lines "
-        f"{start + 1}\u2013{end} (the {window_before}-line window ending at "
-        f"cutoff_batch_line={cutoff_batch_line}). Either your cutoff_batch_line "
-        f"is wrong, or your cleaned text drifted away from the raw content. "
-        f"Re-read the raw batch, find where your cleaned content actually stops, "
-        f"and resubmit with the correct cutoff_batch_line."
-    )
+    raw_toks: list[str] = []
+    tok_to_line: list[int] = []
+    for i, line in enumerate(raw_lines):
+        for t in _content_tokens(line):
+            raw_toks.append(t)
+            tok_to_line.append(i + 1)
+
+    if not raw_toks:
+        return None
+
+    sm = difflib.SequenceMatcher(a=cleaned_toks, b=raw_toks, autojunk=False)
+    blocks = [b for b in sm.get_matching_blocks() if b.size > 0]
+    if not blocks:
+        return None
+
+    last = blocks[-1]
+    raw_end_tok_idx = last.b + last.size - 1
+    cutoff_line = tok_to_line[raw_end_tok_idx]
+    confidence = sum(b.size for b in blocks) / len(cleaned_toks)
+    return cutoff_line, confidence
 
 
 def _find_free_port() -> int:
@@ -131,8 +137,15 @@ class BatchMCPServer:
                 mcp_types.Tool.model_validate({
                     "name": "read_batch",
                     "description": (
-                        "Read the raw text and batch metadata: chunk_id, open nodes, "
-                        "context, known IDs. Returns everything needed for this batch."
+                        "Get the raw batch and its metadata. "
+                        "Response fields: chunk_id (str), raw_content (str), "
+                        "batch_line_count (int, number of lines in raw_content), "
+                        "raw_start/raw_end (1-indexed bounds in the source file), "
+                        "unclosed_nodes (list[str], outer-to-inner, nodes still open "
+                        "from prior batches — continue or close them), "
+                        "previous_batch_tail (str, last cleaned lines for context), "
+                        "known_ids (list[str], all node ids defined in prior batches — "
+                        "do NOT reuse), memory_text (str, persistent notes)."
                     ),
                     "inputSchema": {"type": "object", "properties": {}},
                     "_meta": {"anthropic/maxResultSizeChars": 500000},
@@ -140,46 +153,60 @@ class BatchMCPServer:
                 mcp_types.Tool(
                     name="submit_clean",
                     description=(
-                        "Submit cleaned and annotated markdown. "
-                        "Only include content up to your cutoff point (do NOT include raw remainder). "
-                        "The server runs validation (including a cutoff alignment check "
-                        "that verifies your cleaned text's trailing content matches raw "
-                        "lines near cutoff_batch_line), appends the cutoff marker, "
-                        "writes the clean file, and returns results."
+                        "Submit cleaned, annotated markdown for this batch. "
+                        "Include only content up to your cutoff — do NOT append raw "
+                        "remainder. The server validates annotations (IDs, nesting) "
+                        "and infers the raw cutoff line by aligning your cleaned "
+                        "text's content tokens against raw_content. "
+                        "Response fields: "
+                        "valid (bool), errors (list[str]), warnings (list[str]), "
+                        "inferred_cutoff_batch_line (int, 1-indexed within batch — "
+                        "pass this to commit_batch), "
+                        "match_confidence (float 0-1, fraction of cleaned tokens "
+                        "aligned to raw; <0.6 is rejected), "
+                        "raw_context_around_cutoff (list[str], raw lines near the "
+                        "inferred cutoff so you can verify), "
+                        "cleaned_tail_lines (list[str], last lines you submitted), "
+                        "unclosed_nodes (list[str], outer-to-inner, nodes carrying "
+                        "to next batch). If valid=false, fix and resubmit."
                     ),
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "cleaned_text": {
                                 "type": "string",
-                                "description": "The cleaned and annotated markdown text (everything before cutoff).",
-                            },
-                            "cutoff_batch_line": {
-                                "type": "integer",
                                 "description": (
-                                    "1-indexed line number within THIS BATCH where you stopped cleaning. "
-                                    "For example, if you cleaned up to line 300 of the batch, use 300."
+                                    "Cleaned, annotated markdown. Everything up to "
+                                    "(but not including) the raw cutoff."
                                 ),
                             },
                         },
-                        "required": ["cleaned_text", "cutoff_batch_line"],
+                        "required": ["cleaned_text"],
                     },
                 ),
                 mcp_types.Tool(
-                    name="submit_result",
-                    description="Submit the final result for this batch after successful validation.",
+                    name="commit_batch",
+                    description=(
+                        "Finalize this batch. Call AFTER submit_clean returns valid. "
+                        "Pass the inferred_cutoff_batch_line from submit_clean's "
+                        "response unless you need to override it (e.g. the inferred "
+                        "line sits mid-paragraph). The server stores the cutoff and "
+                        "advances to the next batch. Response: {\"status\": \"ok\"}."
+                    ),
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "chunk_id": {"type": "string"},
                             "cutoff_batch_line": {
                                 "type": "integer",
-                                "description": "Same cutoff_batch_line you used in submit_clean.",
+                                "description": (
+                                    "1-indexed raw line within this batch where "
+                                    "cleaning stops. Use submit_clean's "
+                                    "inferred_cutoff_batch_line."
+                                ),
                             },
-                            "n_lines_cleaned": {"type": "integer"},
-                            "notes": {"type": ["string", "null"]},
                         },
-                        "required": ["chunk_id", "cutoff_batch_line", "n_lines_cleaned"],
+                        "required": ["chunk_id", "cutoff_batch_line"],
                     },
                 ),
             ]
@@ -192,8 +219,8 @@ class BatchMCPServer:
                 return self._handle_read_batch()
             elif name == "submit_clean":
                 return self._handle_submit_clean(arguments)
-            elif name == "submit_result":
-                return self._handle_submit_result(arguments)
+            elif name == "commit_batch":
+                return self._handle_commit_batch(arguments)
             else:
                 return [mcp_types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
@@ -207,7 +234,7 @@ class BatchMCPServer:
             "batch_line_count": s.current_raw_line_count,
             "raw_start": s.current_raw_start + 1,  # 1-indexed for display
             "raw_end": s.current_raw_end,
-            "open_stack": s.open_stack,
+            "unclosed_nodes": s.open_stack,
             "previous_batch_tail": s.current_context_text,
             "known_ids": s.current_known_ids,
             "memory_text": s.current_memory_text,
@@ -216,19 +243,23 @@ class BatchMCPServer:
 
     def _handle_submit_clean(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
         cleaned_text: str = args["cleaned_text"]
-        cutoff_batch_line: int = args["cutoff_batch_line"]
 
-        response = self._validate_and_write_clean(cleaned_text, cutoff_batch_line)
-        data = {
+        response = self._validate_and_write_clean(cleaned_text)
+        data: dict[str, Any] = {
             "valid": response.valid,
             "errors": response.errors,
             "warnings": response.warnings,
-            "raw_context_lines": response.raw_context_lines,
-            "clean_tail_lines": response.clean_tail_lines,
         }
+        if response.inferred_cutoff_batch_line is not None:
+            data["inferred_cutoff_batch_line"] = response.inferred_cutoff_batch_line
+        if response.match_confidence is not None:
+            data["match_confidence"] = round(response.match_confidence, 3)
+        data["raw_context_around_cutoff"] = response.raw_context_around_cutoff
+        data["cleaned_tail_lines"] = response.cleaned_tail_lines
+        data["unclosed_nodes"] = response.unclosed_nodes
         return [mcp_types.TextContent(type="text", text=json.dumps(data, ensure_ascii=False))]
 
-    def _handle_submit_result(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
+    def _handle_commit_batch(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
         cutoff_batch_line: int = args["cutoff_batch_line"]
         # Convert batch-relative to source-relative, write to state
         source_line = self._state_store.current_raw_start + cutoff_batch_line
@@ -239,22 +270,12 @@ class BatchMCPServer:
     # -- Validation + file writing --
 
     def _validate_and_write_clean(
-        self, cleaned_text: str, cutoff_batch_line: int
+        self, cleaned_text: str
     ) -> _SubmitCleanResponse:
         s = self._state_store
         errors: list[str] = []
-
-        if cutoff_batch_line < 1:
-            errors.append(f"cutoff_batch_line {cutoff_batch_line} must be >= 1")
-        if cutoff_batch_line > s.current_raw_line_count:
-            errors.append(
-                f"cutoff_batch_line {cutoff_batch_line} exceeds batch size {s.current_raw_line_count}"
-            )
-
-        if errors:
-            return _SubmitCleanResponse(valid=False, errors=errors)
-
         warnings: list[str] = []
+
         cleaned_tokens = approximate_claude_tokens(cleaned_text)
         if cleaned_tokens < s.current_min_tokens:
             warnings.append(
@@ -264,16 +285,52 @@ class BatchMCPServer:
 
         events = parse_annotations(cleaned_text)
         known = set(s.current_known_ids)
-        validation = validate_annotations(events, known_ids=known)
+        validation = validate_annotations(
+            events, known_ids=known, open_stack=s.open_stack
+        )
         errors.extend(validation.errors)
         warnings.extend(validation.warnings)
 
         raw_lines = s.current_raw_content.splitlines(keepends=True)
-        alignment_error = _check_cutoff_alignment(
-            cleaned_text, raw_lines, cutoff_batch_line
-        )
-        if alignment_error is not None:
-            errors.append(alignment_error)
+        batch_line_count = len(raw_lines)
+
+        inferred = _infer_cutoff_line(cleaned_text, raw_lines)
+        if inferred is None:
+            errors.append(
+                "Cleaned text is too short to align with raw content. "
+                "Submit a substantive batch (>=20 content tokens)."
+            )
+            return _SubmitCleanResponse(valid=False, errors=errors, warnings=warnings)
+
+        cutoff_line, confidence = inferred
+        min_cutoff = max(1, int(batch_line_count * 0.2))
+        if confidence < 0.6 or cutoff_line < min_cutoff:
+            errors.append(
+                f"Could not align cleaned text to raw (confidence={confidence:.2f}, "
+                f"inferred_line={cutoff_line}, batch has {batch_line_count} lines). "
+                "Re-read the raw batch and resubmit with cleaned text that matches "
+                "the raw content more closely."
+            )
+            return _SubmitCleanResponse(valid=False, errors=errors, warnings=warnings)
+
+        # Compute unclosed nodes (start with carried-over open stack)
+        stack: list[str] = list(s.open_stack)
+        for event in events:
+            if event.event_type == "start":
+                stack.append(event.id)
+            elif event.event_type == "end" and stack and stack[-1] == event.id:
+                stack.pop()
+
+        # Hard rule: if more source content follows, at least one container
+        # must remain open (the document's root/chapter continues).
+        if not stack and not s.is_final_batch:
+            errors.append(
+                "You closed every node, but more of the source document "
+                "follows in later batches. Leave the outermost container "
+                "(book, chapter, or current section) OPEN so content can "
+                "continue in the next batch. Resubmit with the appropriate "
+                "closing tags removed."
+            )
 
         if errors:
             return _SubmitCleanResponse(valid=False, errors=errors, warnings=warnings)
@@ -284,18 +341,7 @@ class BatchMCPServer:
         full_content = cleaned_text + "<!-- cutoff -->\n"
         s.write_clean_batch(full_content)
 
-        # Report unclosed nodes
-        stack: list[str] = []
-        for event in events:
-            if event.event_type == "start":
-                stack.append(event.id)
-            elif event.event_type == "end" and stack and stack[-1] == event.id:
-                stack.pop()
-        if stack:
-            warnings.append(f"Unclosed nodes will carry to next batch: {list(stack)}")
-
-        cutoff_offset = cutoff_batch_line
-        raw_context = raw_lines[max(0, cutoff_offset - 5) : cutoff_offset]
+        raw_context = raw_lines[max(0, cutoff_line - 5) : min(batch_line_count, cutoff_line + 2)]
         cleaned_lines = cleaned_text.splitlines()
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
 
@@ -303,8 +349,11 @@ class BatchMCPServer:
             valid=True,
             errors=[],
             warnings=warnings,
-            raw_context_lines=[line.rstrip("\n") for line in raw_context],
-            clean_tail_lines=clean_tail,
+            inferred_cutoff_batch_line=cutoff_line,
+            match_confidence=confidence,
+            raw_context_around_cutoff=[line.rstrip("\n") for line in raw_context],
+            cleaned_tail_lines=clean_tail,
+            unclosed_nodes=stack,
         )
 
     # -- Public API for ParsingService --

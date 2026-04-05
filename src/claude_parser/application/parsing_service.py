@@ -93,7 +93,9 @@ class ParsingService:
             events = parse_annotations(clean_text)
 
             validation = validate_annotations(
-                events, known_ids=set(self.state.known_ids)
+                events,
+                known_ids=set(self.state.known_ids),
+                open_stack=self.state.open_stack,
             )
             if not validation.valid:
                 self.state.write_failure(result.stdout)

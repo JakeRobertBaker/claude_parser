@@ -183,6 +183,11 @@ class FilesystemStateStore:
     def current_known_ids(self) -> list[str]:
         return list(self._tree_dict._data.keys())
 
+    @property
+    def is_final_batch(self) -> bool:
+        """True if this batch covers the remainder of the source file."""
+        return self._current_raw_end >= len(self._raw_lines)
+
     # -- Batch lifecycle --
 
     def prepare_next(self, batch_tokens: int, context_lines: int) -> None:

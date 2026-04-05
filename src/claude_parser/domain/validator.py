@@ -29,16 +29,19 @@ class ValidationResult:
 def validate_annotations(
     events: list[AnnotationEvent],
     known_ids: set[str] | None = None,
+    open_stack: list[str] | None = None,
 ) -> ValidationResult:
     """Validate annotation events for structural and semantic correctness.
 
     Args:
         events: Parsed annotation events from a single batch.
         known_ids: IDs already in the tree from previous batches.
+        open_stack: Nodes left open by previous batches (outer-to-inner).
+            The current batch may close these as if they were opened here.
     """
     result = ValidationResult()
     known = set(known_ids) if known_ids else set()
-    stack: list[str] = []  # open node IDs for nesting check
+    stack: list[str] = list(open_stack) if open_stack else []
     seen_ids: set[str] = set()
     node_types: dict[str, str | None] = {}  # id -> type for proves validation
 

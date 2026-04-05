@@ -41,7 +41,7 @@ class ClaudeCLIAdapter:
                 "--allowedTools",
                 "mcp__batch_tools__read_batch,"
                 "mcp__batch_tools__submit_clean,"
-                "mcp__batch_tools__submit_result",
+                "mcp__batch_tools__commit_batch",
             ])
         else:
             # Legacy mode: use built-in tools directly
