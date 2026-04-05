@@ -367,7 +367,7 @@ class BatchMCPServer:
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
 
         return _SubmitCleanResponse(
-            valid=True,
+            valid=False if errors else True,
             errors=errors,
             warnings=warnings,
             inferred_cutoff_batch_line=cutoff_line,
