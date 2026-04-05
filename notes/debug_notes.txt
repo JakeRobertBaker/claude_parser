@@ -1,0 +1,26 @@
+claude_parser master ? ❯ uv run python -m claude_parser.cli --raw raw/companion_to_analysis_mini.md --state
+~/ai_tool_development/knowledge_prasing/attempt_states/mcp_test_9 --max-sections 3 --timeout 600
+15:26:04 claude_parser.adapters.filesystem_state_store INFO Initialized state directory:
+/home/jake/ai_tool_development/knowledge_prasing/attempt_states/mcp_test_9
+15:26:04 claude_parser.adapters.batch_mcp_server INFO MCP server started on port 54253
+15:26:04 claude_parser.adapters.filesystem_state_store INFO Initialized git repo at
+/home/jake/ai_tool_development/knowledge_prasing/attempt_states/mcp_test_9
+15:26:04 claude_parser.adapters.filesystem_state_store INFO [chunk_000] Processing raw lines 1–747
+15:26:04 mcp.server.lowlevel.server INFO Processing request of type ListToolsRequest
+15:26:06 mcp.server.lowlevel.server INFO Processing request of type CallToolRequest
+15:29:33 mcp.server.lowlevel.server INFO Processing request of type CallToolRequest
+15:29:37 mcp.server.lowlevel.server INFO Processing request of type CallToolRequest
+15:29:43 claude_parser.application.parsing_service INFO [chunk_000] Done. new=26 closed=24 open=2
+15:29:43 claude_parser.adapters.filesystem_state_store INFO [chunk_001] Processing raw lines 564–1122
+15:29:43 mcp.server.lowlevel.server INFO Processing request of type ListToolsRequest
+15:29:45 mcp.server.lowlevel.server INFO Processing request of type CallToolRequest
+15:32:52 mcp.server.lowlevel.server INFO Processing request of type CallToolRequest
+15:35:47 mcp.server.lowlevel.server INFO Processing request of type CallToolRequest
+15:35:50 mcp.server.lowlevel.server INFO Processing request of type CallToolRequest
+15:35:57 claude_parser ERROR [chunk_001] Service-side annotation validation failed: ["Line 1: improper nesting — expected end of
+'ch01', got end of 'ch01_sec1_3'"]. See failures/chunk_001_raw_response.txt
+15:35:57 claude_parser.adapters.batch_mcp_server INFO MCP server stopped
+15:35:57 asyncio ERROR Task was destroyed but it is pending!
+task: <Task pending name='Task-7' coro=<_shutdown_watcher() running at
+/home/jake/ai_tool_development/knowledge_prasing/claude_parser/.venv/lib/python3.14/site-packages/sse_starlette/sse.py:107>
+wait_for=<Future pending cb=[Task.task_wakeup()]>>
