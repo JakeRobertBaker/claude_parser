@@ -43,7 +43,7 @@ class FilesystemStateStore:
         self._current_raw_start: int = 0
         self._current_raw_end: int = 0
         self._current_raw_line_count: int = 0
-        self._current_context_text: str = ""
+        self._current_prior_clean_tail: str = ""
         self._current_memory_text: str = ""
         self._current_min_tokens: int = 0
         self._current_cutoff: int | None = None  # set by MCP server via set_cutoff
@@ -168,8 +168,8 @@ class FilesystemStateStore:
         return self._current_raw_line_count
 
     @property
-    def current_context_text(self) -> str:
-        return self._current_context_text
+    def current_prior_clean_tail(self) -> str:
+        return self._current_prior_clean_tail
 
     @property
     def current_memory_text(self) -> str:
@@ -210,7 +210,7 @@ class FilesystemStateStore:
         self._current_raw_start = start
         self._current_raw_end = end
         self._current_raw_line_count = end - start
-        self._current_context_text = self._get_context_lines(ordinal, context_lines)
+        self._current_prior_clean_tail = self._get_prior_clean_tail(ordinal, context_lines)
         self._current_memory_text = self._read_memory()
         self._current_min_tokens = int(approximate_claude_tokens(raw_content) * 0.5)
         self._current_cutoff = None
@@ -298,7 +298,7 @@ class FilesystemStateStore:
 
     # -- Context (internal) --
 
-    def _get_context_lines(self, ordinal: int, n_lines: int) -> str:
+    def _get_prior_clean_tail(self, ordinal: int, n_lines: int) -> str:
         if ordinal == 0:
             return ""
         prev_path = self._clean_path(ordinal - 1)

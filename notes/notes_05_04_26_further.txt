@@ -1,0 +1,71 @@
+I have interrupted your next run and suspect your recent fix is not addressing the problem and that your analysis `Haiku ignored the warning. Converting to a hard error with a clear fix path:` is not quite right.
+
+I have inspected your `attempt_states/mcp_test_8_v2` and exported the logs to `claude_chat_log/mcp_test_8_v2`. The .txt and jsonl files contain the same content. You may find jsonl easier to read.
+
+invoke_1.
+I think Haiku is inserting these node closures correctly. So `book_companion_analysis`, `ch01` are indeed left open.
+
+In claude_chat_log/mcp_test_8_v2/invoke_1.txt we see mcp__batch_tools__submit_clean input contain
+
+```
+          │ \\epsilon > 0$, and any $t \\in \\mathbb{R}$, we can find an $x$ with $|x - y|
+          │ < \\epsilon$ such that $g(x) = t$.\n\n<!-- tree:end id=\"ex_1_34\" -->\n\n<!--
+          │ tree:end id=\"ch01_sec01_05\" -->\n\n"
+          │ }
+
+ ↳ Result │ {"valid": true, "errors": [], "warnings": [], "inferred_cutoff_batch_line":
+
+```
+
+We see the same in clean_0.md.
+
+invoke_2. 
+
+It appears that our validation do not work correctly when we close a Node in left open by the previous batch. 
+
+See `claude_chat_log/mcp_test_8_v2/invoke_2.txt` has 
+
+under mcp__batch_tools__submit_clean
+
+``` ↳ Result │ {"valid": false, "errors": ["Line 368: tree:end for 'ch01' with no
+          │ matching open node"], "warnings": [], "raw_context_around_cutoff": [],
+          │ "cleaned_tail_lines": [], "unclosed_nodes": []}
+
+```
+
+We also see that open node information is returned by mcp__batch_tools__read_batch,
+
+```
+          │ "batch_line_count": 600, "raw_start": 748, "raw_end": 1347, "unclosed_nodes":
+          │ ["book_companion_analysis", "ch01"], "previous_batch_tail": "<!-- tree:end
+          │ id=\"ex_1_33\" -->\n\n<!-- tree:start id=\"ex_1_34\" type=\"exercise\"
+
+```
+
+Therefore Haiku decides to `removing that explicit close tag and letting the structure continue properly`.
+
+We do not close this node in the submit clean so it should remain. However we see output from submit_clean
+
+mcp__batch_tools__submit_clean result contains. So the open nodes `book_companion_analysis`, `ch01` have not continued as open like they were in the previous batch.
+
+```
+          │ tree:end id=\"ch02_sec02_01\" -->", "", "<!-- tree:end id=\"ch02\" -->"],
+          │ "unclosed_nodes": []}
+
+```
+
+Overall I think there are issues with the validation and mcp. I think we need to carefully scrutinise both.
+
+Some MCP questions. I am generally worried that as we have made changes old variables and items are still here and we have not fully moded to the MCP handles line number stuff and Haiku just cleans and confirms it agrees with the cutoff.
+
+Are these parts of _handle_read_batch needed?
+chunk_id, raw_start, raw_end
+Can we check previous_batch_tail is the tail of the previously cleaned batch? Do we want a better name than s.context_text?
+
+Does commit batch need chunk_id? Generally is this something the MCP should handle and not the Haiku mode.
+
+Overall
+
+Let's investigate, plan and implement changes. I shall manually run the integration unit test and feed back. I did not like all of the mcp_test_8_v... naming we can just do mcp_test_9,10,...
+
+We may want to roll back your post mcp_test_8_v2 changes if they missed the issue. Do we want to change that warning to an error?

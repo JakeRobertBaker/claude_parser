@@ -120,6 +120,7 @@ class BatchMCPServer:
         self._state_store = state_store
         self._state_dir = os.path.abspath(state_dir)
         self._submitted: bool = False
+        self._inferred_cutoff_line: int | None = None
         self._port = _find_free_port()
         self._thread: threading.Thread | None = None
         self._uvicorn_server: Any = None
@@ -138,12 +139,11 @@ class BatchMCPServer:
                     "name": "read_batch",
                     "description": (
                         "Get the raw batch and its metadata. "
-                        "Response fields: chunk_id (str), raw_content (str), "
+                        "Response fields: raw_content (str), "
                         "batch_line_count (int, number of lines in raw_content), "
-                        "raw_start/raw_end (1-indexed bounds in the source file), "
                         "unclosed_nodes (list[str], outer-to-inner, nodes still open "
                         "from prior batches — continue or close them), "
-                        "previous_batch_tail (str, last cleaned lines for context), "
+                        "prior_clean_tail (str, last cleaned lines for context), "
                         "known_ids (list[str], all node ids defined in prior batches — "
                         "do NOT reuse), memory_text (str, persistent notes)."
                     ),
@@ -188,25 +188,23 @@ class BatchMCPServer:
                     name="commit_batch",
                     description=(
                         "Finalize this batch. Call AFTER submit_clean returns valid. "
-                        "Pass the inferred_cutoff_batch_line from submit_clean's "
-                        "response unless you need to override it (e.g. the inferred "
-                        "line sits mid-paragraph). The server stores the cutoff and "
-                        "advances to the next batch. Response: {\"status\": \"ok\"}."
+                        "By default the server uses the inferred_cutoff_batch_line "
+                        "from your last submit_clean. Pass cutoff_batch_line only "
+                        "to override it (e.g. inferred line sits mid-paragraph). "
+                        "Response: {\"status\": \"ok\"}."
                     ),
                     inputSchema={
                         "type": "object",
                         "properties": {
-                            "chunk_id": {"type": "string"},
                             "cutoff_batch_line": {
                                 "type": "integer",
                                 "description": (
-                                    "1-indexed raw line within this batch where "
-                                    "cleaning stops. Use submit_clean's "
-                                    "inferred_cutoff_batch_line."
+                                    "Optional. 1-indexed raw line within this "
+                                    "batch where cleaning stops. Omit to use the "
+                                    "server's inferred cutoff."
                                 ),
                             },
                         },
-                        "required": ["chunk_id", "cutoff_batch_line"],
                     },
                 ),
             ]
@@ -229,13 +227,10 @@ class BatchMCPServer:
     def _handle_read_batch(self) -> list[mcp_types.TextContent]:
         s = self._state_store
         data = {
-            "chunk_id": s.current_id,
             "raw_content": s.current_raw_content,
             "batch_line_count": s.current_raw_line_count,
-            "raw_start": s.current_raw_start + 1,  # 1-indexed for display
-            "raw_end": s.current_raw_end,
             "unclosed_nodes": s.open_stack,
-            "previous_batch_tail": s.current_context_text,
+            "prior_clean_tail": s.current_prior_clean_tail,
             "known_ids": s.current_known_ids,
             "memory_text": s.current_memory_text,
         }
@@ -260,7 +255,20 @@ class BatchMCPServer:
         return [mcp_types.TextContent(type="text", text=json.dumps(data, ensure_ascii=False))]
 
     def _handle_commit_batch(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
-        cutoff_batch_line: int = args["cutoff_batch_line"]
+        cutoff_batch_line = args.get("cutoff_batch_line")
+        if cutoff_batch_line is None:
+            cutoff_batch_line = self._inferred_cutoff_line
+        if cutoff_batch_line is None:
+            return [mcp_types.TextContent(
+                type="text",
+                text=json.dumps({
+                    "status": "error",
+                    "error": (
+                        "No cutoff available. Call submit_clean successfully "
+                        "first, or pass cutoff_batch_line explicitly."
+                    ),
+                }),
+            )]
         # Convert batch-relative to source-relative, write to state
         source_line = self._state_store.current_raw_start + cutoff_batch_line
         self._state_store.set_cutoff(source_line)
@@ -321,25 +329,22 @@ class BatchMCPServer:
             elif event.event_type == "end" and stack and stack[-1] == event.id:
                 stack.pop()
 
-        # Hard rule: if more source content follows, at least one container
-        # must remain open (the document's root/chapter continues).
+        # Soft warning: if more source content follows, the outermost
+        # container should usually remain open so content can continue.
         if not stack and not s.is_final_batch:
-            errors.append(
+            warnings.append(
                 "You closed every node, but more of the source document "
-                "follows in later batches. Leave the outermost container "
-                "(book, chapter, or current section) OPEN so content can "
-                "continue in the next batch. Resubmit with the appropriate "
-                "closing tags removed."
+                "follows in later batches. If the outermost container "
+                "(book, chapter, current section) continues past your "
+                "cutoff, leave it OPEN so content carries to the next batch."
             )
-
-        if errors:
-            return _SubmitCleanResponse(valid=False, errors=errors, warnings=warnings)
 
         if cleaned_text and not cleaned_text.endswith("\n"):
             cleaned_text += "\n"
 
         full_content = cleaned_text + "<!-- cutoff -->\n"
         s.write_clean_batch(full_content)
+        self._inferred_cutoff_line = cutoff_line
 
         raw_context = raw_lines[max(0, cutoff_line - 5) : min(batch_line_count, cutoff_line + 2)]
         cleaned_lines = cleaned_text.splitlines()
@@ -360,6 +365,7 @@ class BatchMCPServer:
 
     def prepare(self) -> None:
         self._submitted = False
+        self._inferred_cutoff_line = None
 
     def succeeded(self) -> bool:
         return self._submitted

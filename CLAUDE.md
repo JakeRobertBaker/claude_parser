@@ -24,11 +24,11 @@ When adding a new feature:
 ## MCP Tools
 
 Haiku uses 3 MCP tools (no built-in Read/Write/Bash):
-- `read_batch` — raw content + batch metadata (unclosed_nodes, known_ids, context, memory). Uses `maxResultSizeChars: 500000` to avoid truncation.
-- `submit_clean` — cleaned text → server validates annotations and infers the raw cutoff line via token-sequence alignment (`difflib.SequenceMatcher`). Returns `inferred_cutoff_batch_line`, `match_confidence`, `unclosed_nodes`, `raw_context_around_cutoff`.
-- `commit_batch` — `chunk_id` + `cutoff_batch_line` → server writes cutoff to state via `set_cutoff()` and marks batch complete.
+- `read_batch` — no args. Returns `raw_content`, `batch_line_count`, `unclosed_nodes`, `prior_clean_tail`, `known_ids`, `memory_text`. Uses `maxResultSizeChars: 500000` to avoid truncation.
+- `submit_clean` — `cleaned_text` → server validates annotations and infers the raw cutoff line via token-sequence alignment (`difflib.SequenceMatcher`). Returns `inferred_cutoff_batch_line`, `match_confidence`, `unclosed_nodes`, `raw_context_around_cutoff`, `cleaned_tail_lines`.
+- `commit_batch` — no args by default (server uses its stored inferred cutoff). Optional `cutoff_batch_line` to override. Writes cutoff to state via `set_cutoff()` and marks batch complete.
 
-Open nodes across batches are supported — Haiku can leave nodes unclosed at cutoff. The server warns if all nodes are closed but the cutoff is mid-batch.
+Open nodes across batches are supported — Haiku can leave nodes unclosed at cutoff. The server emits a soft warning (not an error) if all nodes are closed but the cutoff is mid-batch.
 
 The MCP server (`adapters/batch_mcp_server.py`) runs as SSE on localhost. It holds a concrete `FilesystemStateStore` reference (not the protocol) so it can access adapter-specific properties directly. Version control is internal to `FilesystemStateStore` (no separate VCS port).
 

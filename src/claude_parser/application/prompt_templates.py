@@ -12,14 +12,13 @@ as a tree. Execute the workflow below now. Do not ask for confirmation.
 
 ## Workflow
 1. Call `read_batch` to get raw_content, unclosed_nodes (from prior batches), \
-known_ids, previous_batch_tail, memory_text.
+known_ids, prior_clean_tail, memory_text.
 2. Clean the raw text and wrap each structural unit in tree comments.
 3. Call `submit_clean` with your cleaned text. The server validates \
-annotations and infers where your cleaning stops in the raw text, returning \
-`inferred_cutoff_batch_line`.
+annotations and infers where your cleaning stops in the raw text.
 4. If invalid, fix errors and resubmit.
-5. Call `commit_batch` with `chunk_id` and `inferred_cutoff_batch_line` \
-(override only if the inferred line is clearly wrong).
+5. Call `commit_batch` (no arguments) to finalize. The server uses the \
+inferred cutoff from submit_clean. Pass `cutoff_batch_line` only to override.
 
 ## Cleaning
 - Fix: broken LaTeX, broken markdown, page numbers, headers/footers, \

@@ -1,4 +1,0 @@
-Agree with `MCP warning when all nodes closed + mid-batch cutoff`
-
-We can also do positive example in prompt. You 
-Can tell from the prompt that the theorem statement should be a theorem node and it's proof should be in a proof node with proves pointing towards that. Maybe we can replace the simple

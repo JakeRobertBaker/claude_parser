@@ -1,0 +1,59 @@
+Understand this codebase, CLAUDE.md, architecture.md should be sufficent.
+
+This runs logs are in `ai_tool_development/knowledge_prasing/claude_chat_log/mcp_test_7`.
+The recent run state and output dir is in `/home/jake/ai_tool_development/knowledge_prasing/attempt_states/mcp_test_7`.
+
+I recently ran a run via `uv run python -m claude_parser.cli --raw raw/companion_to_analysis_mini.md --state ~/ai_tool_development/knowledge_prasing/attempt_states/mcp_test_6 --max-sections 3 --timeout 600`
+
+Things looked okay.
+
+## Issues
+Log `mcp_test_7/invoke_0.jsonl` says `Section 1.6 node left open for continuation in next batch.`. 
+
+However clean_0.md has `<!-- tree:end id="sec01_06" -->`. 
+It also has `<!-- tree:end id="book_main" -->`.
+
+Do we see Haiku doing this in the log. This could be a problem. Would encouraging the ans tag help?
+
+Can you see any other issues in the log?
+
+## MCP cutoff lines
+A few of these logs show the Haiku struggle to get the cutoff line number right first try. 
+Would it not be easier for Haiku to pick the cutooff without explicitly stating the line number.
+Then the MCP tool looks at the list lines of cleaned text submitted and does fuzzy find to get the line number in raw.
+Maybe we can give Haiku the opportunity to approve or veto that MCP recomended raw line in the submit stage.
+
+
+## MCP
+Are we sure that the tool schema names are clear for and Haiku clearly understands what all outputs are and how to inpterpret.
+
+## Annotation Schema
+We currently define the annotation schema in src/application/prompt_templates.py.
+My original notes defining this are in notes/notes_02_04_26.txt. Do we want a .md file, or use CLAUDE or architecture.md as a persistent location of this schema description for future memory by Claude code?
+
+After looking into these concerns we will plan and implement changes. If you are uncertain ask questions. Do not make assumptions.
+
+After changes do `uv run pytest tests/`, `uv run ruff check src/ tests/` `uv run ty check src/ tests/`.
+
+We will then do an integration test similiar to the initial `uv run python -m claude_parser.cli...` command, be careful to not write to an existing state dir.
+
+
+
+
+# Further Notes
+
+Agree with `MCP warning when all nodes closed + mid-batch cutoff`
+
+We can also do positive example in prompt. You 
+Can tell from the prompt that the theorem statement should be a theorem node and it's proof should be in a proof node with proves pointing towards that. 
+This idea may also be in the notes.
+
+Maybe we can replace the simple example in the prompt
+```
+<!-- tree:start id="node_id" title="Node Title" -->
+...
+```
+with an example that does these ideas. Are there any other ideas we should add to the example?
+
+Re `Echo open_stack in submit_clean response`.
+Maybe this should be part of the MCP warning about all nodes closed. We see whether some nodes are open or all nodes are closed. Is open stack the most informative name?
