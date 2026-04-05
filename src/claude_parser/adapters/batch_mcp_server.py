@@ -135,21 +135,23 @@ class BatchMCPServer:
         @server.list_tools()
         async def list_tools() -> list[mcp_types.Tool]:
             return [
-                mcp_types.Tool.model_validate({
-                    "name": "read_batch",
-                    "description": (
-                        "Get the raw batch and its metadata. "
-                        "Response fields: raw_content (str), "
-                        "batch_line_count (int, number of lines in raw_content), "
-                        "unclosed_nodes (list[str], outer-to-inner, nodes still open "
-                        "from prior batches — continue or close them), "
-                        "prior_clean_tail (str, last cleaned lines for context), "
-                        "known_ids (list[str], all node ids defined in prior batches — "
-                        "do NOT reuse), memory_text (str, persistent notes)."
-                    ),
-                    "inputSchema": {"type": "object", "properties": {}},
-                    "_meta": {"anthropic/maxResultSizeChars": 500000},
-                }),
+                mcp_types.Tool.model_validate(
+                    {
+                        "name": "read_batch",
+                        "description": (
+                            "Get the raw batch and its metadata. "
+                            "Response fields: raw_content (str), "
+                            "batch_line_count (int, number of lines in raw_content), "
+                            "unclosed_nodes (list[str], outer-to-inner, nodes still open "
+                            "from prior batches — continue or close them), "
+                            "prior_clean_tail (str, last cleaned lines for context), "
+                            "known_ids (list[str], all node ids defined in prior batches — "
+                            "do NOT reuse), memory_text (str, persistent notes)."
+                        ),
+                        "inputSchema": {"type": "object", "properties": {}},
+                        "_meta": {"anthropic/maxResultSizeChars": 500000},
+                    }
+                ),
                 mcp_types.Tool(
                     name="submit_clean",
                     description=(
@@ -191,7 +193,7 @@ class BatchMCPServer:
                         "By default the server uses the inferred_cutoff_batch_line "
                         "from your last submit_clean. Pass cutoff_batch_line only "
                         "to override it (e.g. inferred line sits mid-paragraph). "
-                        "Response: {\"status\": \"ok\"}."
+                        'Response: {"status": "ok"}.'
                     ),
                     inputSchema={
                         "type": "object",
@@ -220,7 +222,9 @@ class BatchMCPServer:
             elif name == "commit_batch":
                 return self._handle_commit_batch(arguments)
             else:
-                return [mcp_types.TextContent(type="text", text=f"Unknown tool: {name}")]
+                return [
+                    mcp_types.TextContent(type="text", text=f"Unknown tool: {name}")
+                ]
 
     # -- Tool handlers --
 
@@ -234,7 +238,11 @@ class BatchMCPServer:
             "known_ids": s.current_known_ids,
             "memory_text": s.current_memory_text,
         }
-        return [mcp_types.TextContent(type="text", text=json.dumps(data, ensure_ascii=False))]
+        return [
+            mcp_types.TextContent(
+                type="text", text=json.dumps(data, ensure_ascii=False)
+            )
+        ]
 
     def _handle_submit_clean(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
         cleaned_text: str = args["cleaned_text"]
@@ -252,23 +260,31 @@ class BatchMCPServer:
         data["raw_context_around_cutoff"] = response.raw_context_around_cutoff
         data["cleaned_tail_lines"] = response.cleaned_tail_lines
         data["unclosed_nodes"] = response.unclosed_nodes
-        return [mcp_types.TextContent(type="text", text=json.dumps(data, ensure_ascii=False))]
+        return [
+            mcp_types.TextContent(
+                type="text", text=json.dumps(data, ensure_ascii=False)
+            )
+        ]
 
     def _handle_commit_batch(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
         cutoff_batch_line = args.get("cutoff_batch_line")
         if cutoff_batch_line is None:
             cutoff_batch_line = self._inferred_cutoff_line
         if cutoff_batch_line is None:
-            return [mcp_types.TextContent(
-                type="text",
-                text=json.dumps({
-                    "status": "error",
-                    "error": (
-                        "No cutoff available. Call submit_clean successfully "
-                        "first, or pass cutoff_batch_line explicitly."
+            return [
+                mcp_types.TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "status": "error",
+                            "error": (
+                                "No cutoff available. Call submit_clean successfully "
+                                "first, or pass cutoff_batch_line explicitly."
+                            ),
+                        }
                     ),
-                }),
-            )]
+                )
+            ]
         # Convert batch-relative to source-relative, write to state
         source_line = self._state_store.current_raw_start + cutoff_batch_line
         self._state_store.set_cutoff(source_line)
@@ -277,9 +293,7 @@ class BatchMCPServer:
 
     # -- Validation + file writing --
 
-    def _validate_and_write_clean(
-        self, cleaned_text: str
-    ) -> _SubmitCleanResponse:
+    def _validate_and_write_clean(self, cleaned_text: str) -> _SubmitCleanResponse:
         s = self._state_store
         errors: list[str] = []
         warnings: list[str] = []
@@ -346,13 +360,15 @@ class BatchMCPServer:
         s.write_clean_batch(full_content)
         self._inferred_cutoff_line = cutoff_line
 
-        raw_context = raw_lines[max(0, cutoff_line - 5) : min(batch_line_count, cutoff_line + 2)]
+        raw_context = raw_lines[
+            max(0, cutoff_line - 5) : min(batch_line_count, cutoff_line + 2)
+        ]
         cleaned_lines = cleaned_text.splitlines()
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
 
         return _SubmitCleanResponse(
             valid=True,
-            errors=[],
+            errors=errors,
             warnings=warnings,
             inferred_cutoff_batch_line=cutoff_line,
             match_confidence=confidence,
@@ -437,7 +453,10 @@ class BatchMCPServer:
         )
 
         config = uvicorn.Config(
-            app, host="127.0.0.1", port=self._port, log_level="warning",
+            app,
+            host="127.0.0.1",
+            port=self._port,
+            log_level="warning",
         )
         server = uvicorn.Server(config)
         self._uvicorn_server = server
