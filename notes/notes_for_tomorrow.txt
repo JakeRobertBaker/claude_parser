@@ -1,0 +1,7 @@
+Do not end notes at the end of a batch. If they really are ending, you can end them at the beginning of the next.
+
+The next batch can see open nodes and the order of them which gives the order to close them.
+
+A final post run edit of the dict can be fine. Our node.py domain already enforces constraints. Detach child and add elsewhere.
+
+General issue with MCP being in adapter layer and ports in the application layer. Picking a cutoff is kind of intrinsic.
