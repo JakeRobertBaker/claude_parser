@@ -84,7 +84,9 @@ def process_batch_annotations(
             elif tree_dict.root_node is not None:
                 parent = tree_dict.root_node
 
-            node_type = NodeType(event.node_type) if event.node_type else NodeType.GENERIC
+            node_type = (
+                NodeType(event.node_type) if event.node_type else NodeType.GENERIC
+            )
 
             new_node = Node(
                 id=event.id,
@@ -93,7 +95,7 @@ def process_batch_annotations(
                 content_list=[],
                 node_type=node_type,
                 node_dict=tree_dict,
-                dependency_ids=event.dependencies if event.dependencies else None,
+                dependency_ids=event.deps if event.deps else None,
                 proves_id=event.proves,
             )
 

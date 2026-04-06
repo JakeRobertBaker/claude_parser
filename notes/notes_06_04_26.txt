@@ -1,3 +1,5 @@
+I have decided to change the annotation schema to something simpler and less error prone from 
+
 ## Tool `read-batch`
 Input schema remains empty.
 Output schema via `_handle_read_batch` changes

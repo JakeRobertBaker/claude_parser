@@ -50,7 +50,7 @@ src/claude_parser/
 │   ├── content_bound.py                # ContentBound — spatial bounds with union/intersect
 │   ├── partition.py                    # ContentPartition — overlap validation
 │   ├── protocols.py                    # ContentBase protocol (ordering + truthiness)
-│   ├── annotation_parser.py            # Parse <!-- tree:start/end --> comments from markdown
+│   ├── annotation_parser.py            # Parse @-depth annotation headers + cutoff
 │   ├── annotation_tree_builder.py      # Fragment AST builder — handles cross-batch nodes
 │   └── validator.py                    # Annotation validation (nesting, IDs, proves, deps)
 │
@@ -118,9 +118,9 @@ Main Loop:  while not state.complete
         → batch_tools.prepare()  (reads from shared state — no args)
         → llm.invoke(mcp_config_path=...)
         → Haiku calls read_batch (raw content + metadata from state)
-        → Haiku calls submit_clean (cleaned text + cutoff line)
-            → server validates, writes clean file, reports unclosed nodes
-        → Haiku calls submit_result → MCP server writes cutoff to state
+        → Haiku calls submit_clean (cleaned text)
+            → server validates, writes clean file, infers cutoff, returns proposed tree
+        → Haiku calls commit_batch → MCP server writes cutoff to state
         → service checks batch_tools.succeeded()
         → service reads clean file, runs domain logic:
             → parse_annotations → validate_annotations → process_batch_annotations
@@ -132,20 +132,20 @@ Final:  → concatenate clean files → final.md
 
 ## Annotation Format
 
-Haiku embeds structure inline using HTML comments:
+Haiku embeds structure with depth-marked headers:
 
 ```markdown
-<!-- tree:start id="thm_1_2" type="theorem" title="Theorem 1.2" -->
+@ -- id="ch_1" title="Chapter 1"
+@ --- id="thm_1_2" type="theorem"
 Statement of the theorem...
-<!-- tree:end id="thm_1_2" -->
+@ --- id="thm_1_2_proof" type="proof" proves="thm_1_2" deps=["lem_1_1"]
 ```
 
-Attributes: id (required), title (required), type (optional, semantic only),
-anc (optional, advisory), proves (optional, proof only),
-dependencies (optional, comma-separated IDs).
+Attributes: `id` (required), `title` (optional), `type` (optional semantic type),
+`proves` (proof only), `deps` (optional prerequisite IDs).
 
-Nesting is the source of truth for tree structure. A `<!-- cutoff -->` comment
-marks where cleaning stops; lines after it are unchanged raw text.
+Nesting is defined by depth (`-`, `--`, `---`, ...). A `<!-- cutoff -->` comment
+still marks where cleaning stops inside each clean batch file.
 
 ## Ports & Adapters Analogy
 
@@ -163,10 +163,10 @@ Tomorrow you could write `OpenAIAdapter` for `LLMPort`, `OpenCodeMCPAdapter` for
 
 Haiku interacts with three MCP tools instead of built-in Read/Write/Bash:
 
-- **`read_batch`** — Returns raw content + batch metadata (chunk_id, open_stack, known_ids, previous_batch_tail). Uses `_meta.anthropic.maxResultSizeChars: 500000` to avoid truncation.
-- **`submit_clean(cleaned_text, cutoff_batch_line)`** — Submits cleaned markdown. Server validates annotations (token-based soft minimum at 50%), appends cutoff marker + raw remainder, writes clean file. Returns validation result + alignment context + unclosed node info.
-- **`submit_result(chunk_id, cutoff_batch_line, n_lines_cleaned, notes)`** — Submits structured result. Replaces stdout JSON parsing.
+- **`read_batch`** — Returns raw content + batch metadata (`batch_line_count`, `current_tree`, `prior_clean_tail`, `known_ids`, `memory_text`). Uses `_meta.anthropic.maxResultSizeChars: 500000` to avoid truncation.
+- **`submit_clean(cleaned_text)`** — Submits cleaned markdown. Server validates annotations (token-based soft minimum at 50%), infers cutoff by token alignment, appends `<!-- cutoff -->`, writes clean file, and returns alignment context + `proposed_tree`.
+- **`commit_batch(cutoff_batch_line?)`** — Finalizes the batch. Uses inferred cutoff by default, with optional override.
 
-Open nodes across batches are supported — Haiku can leave nodes unclosed at cutoff. The open_stack carries them to the next batch. The token minimum is a soft warning, not a hard error.
+Open nodes across batches are supported - Haiku can leave nodes unclosed at cutoff. The open stack carries to the next batch and appears in `current_tree` / `proposed_tree` previews. The token minimum is a soft warning, not a hard error.
 
 The MCP server runs as an SSE server in a background thread, sharing StatePort with ParsingService. Claude CLI connects via `--mcp-config` with `--system-prompt` (overrides default to skip memory/CLAUDE.md), `--tools ""` (no built-in tools), and `--strict-mcp-config`.

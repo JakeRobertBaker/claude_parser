@@ -1,8 +1,10 @@
 """Parse inline tree annotations from markdown text.
 
-Annotations are HTML comments of the form:
-    <!-- tree:start id="node_id" title="Node Title" [type="theorem"] ... -->
-    <!-- tree:end id="node_id" -->
+Node headers use the new depth-marked form:
+    @ --- id="node_id" title="Node Title" [type="theorem"] [deps=["a"]]
+
+Depth transitions generate implicit start/end events. The parser still reads
+the explicit cutoff marker:
     <!-- cutoff -->
 """
 
@@ -19,61 +21,99 @@ class AnnotationEvent:
     id: str  # required for start/end, empty for cutoff
     title: str | None = None  # required on start
     node_type: str | None = None
-    anc: str | None = None
     proves: str | None = None
-    dependencies: list[str] = field(default_factory=list)
+    deps: list[str] = field(default_factory=list)
 
 
-_ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
+_ATTR_RE = re.compile(r'(\w+)=("[^"]*"|\[[^\]]*\]|[^\s]+)')
 
-_START_RE = re.compile(r"<!--\s*tree:start\s+(.*?)\s*-->")
-_END_RE = re.compile(r'<!--\s*tree:end\s+id="([^"]+)"\s*-->')
+_NODE_RE = re.compile(r"^\s*@\s*(-+)\s+(.*?)\s*$")
 _CUTOFF_RE = re.compile(r"<!--\s*cutoff\s*-->")
 
 
 def _parse_attrs(attr_str: str) -> dict[str, str]:
-    return dict(_ATTR_RE.findall(attr_str))
+    attrs: dict[str, str] = {}
+    for key, raw_value in _ATTR_RE.findall(attr_str):
+        value = raw_value.strip()
+        if value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
+        attrs[key] = value
+    return attrs
 
 
-def parse_annotations(text: str) -> list[AnnotationEvent]:
-    """Parse all tree:start, tree:end, and cutoff comments from markdown text."""
+def _parse_deps(value: str | None) -> list[str]:
+    if not value:
+        return []
+    text = value.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    deps: list[str] = []
+    for part in text.split(","):
+        dep = part.strip().strip('"').strip("'")
+        if dep:
+            deps.append(dep)
+    return deps
+
+
+def parse_annotations(
+    text: str, open_stack: list[str] | None = None
+) -> list[AnnotationEvent]:
+    """Parse start/end/cutoff events from depth-marked annotation headers.
+
+    Args:
+        text: Cleaned markdown with inline annotation headers.
+        open_stack: IDs already open from prior batches (outer-to-inner).
+            Used to resolve implicit closes when current batch depth decreases.
+    """
     events: list[AnnotationEvent] = []
+    stack = list(open_stack) if open_stack else []
 
     for line_number, line in enumerate(text.splitlines(), start=1):
-        start_match = _START_RE.search(line)
-        if start_match:
-            attrs = _parse_attrs(start_match.group(1))
-            node_id = attrs.get("id", "")
-            if not node_id:
-                continue
-            deps_str = attrs.get("dependencies", "")
-            deps = [d.strip() for d in deps_str.split(",") if d.strip()] if deps_str else []
-            events.append(AnnotationEvent(
+        if _CUTOFF_RE.search(line):
+            events.append(
+                AnnotationEvent(
+                    line_number=line_number,
+                    event_type="cutoff",
+                    id="",
+                )
+            )
+            break
+
+        node_match = _NODE_RE.match(line)
+        if not node_match:
+            continue
+
+        depth = len(node_match.group(1))
+        attrs = _parse_attrs(node_match.group(2))
+        node_id = attrs.get("id", "")
+        if not node_id:
+            continue
+
+        while len(stack) >= depth:
+            events.append(
+                AnnotationEvent(
+                    line_number=line_number,
+                    event_type="end",
+                    id=stack.pop(),
+                )
+            )
+
+        deps_value = attrs.get("deps")
+        if deps_value is None:
+            deps_value = attrs.get("dependencies")
+        deps = _parse_deps(deps_value)
+
+        events.append(
+            AnnotationEvent(
                 line_number=line_number,
                 event_type="start",
                 id=node_id,
                 title=attrs.get("title"),
                 node_type=attrs.get("type"),
-                anc=attrs.get("anc"),
                 proves=attrs.get("proves"),
-                dependencies=deps,
-            ))
-            continue
-
-        end_match = _END_RE.search(line)
-        if end_match:
-            events.append(AnnotationEvent(
-                line_number=line_number,
-                event_type="end",
-                id=end_match.group(1),
-            ))
-            continue
-
-        if _CUTOFF_RE.search(line):
-            events.append(AnnotationEvent(
-                line_number=line_number,
-                event_type="cutoff",
-                id="",
-            ))
+                deps=deps,
+            )
+        )
+        stack.append(node_id)
 
     return events

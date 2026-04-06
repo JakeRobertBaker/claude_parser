@@ -1,7 +1,7 @@
 """Validate inline tree annotations for structural consistency.
 
 Checks annotation events for proper nesting, unique IDs, and semantic
-rules (proves, dependencies). Returns errors (fatal) and warnings.
+rules (proves, deps). Returns errors (fatal) and warnings.
 """
 
 from __future__ import annotations
@@ -84,7 +84,10 @@ def validate_annotations(
                 target_type = node_types.get(event.proves)
                 if target_type is None and event.proves in known:
                     pass  # can't check type of previously known nodes here
-                elif target_type is not None and target_type not in _PROVEABLE_TARGET_VALUES:
+                elif (
+                    target_type is not None
+                    and target_type not in _PROVEABLE_TARGET_VALUES
+                ):
                     result.warnings.append(
                         f"Line {event.line_number}: proves='{event.proves}' "
                         f"targets type '{target_type}', expected one of "
@@ -93,7 +96,7 @@ def validate_annotations(
 
             # dependency references
             all_known = seen_ids | known
-            for dep_id in event.dependencies:
+            for dep_id in event.deps:
                 if dep_id not in all_known:
                     result.warnings.append(
                         f"Line {event.line_number}: dependency '{dep_id}' "
@@ -103,7 +106,7 @@ def validate_annotations(
         elif event.event_type == "end":
             if not stack:
                 result.errors.append(
-                    f"Line {event.line_number}: tree:end for '{event.id}' "
+                    f"Line {event.line_number}: end for '{event.id}' "
                     f"with no matching open node"
                 )
             elif stack[-1] != event.id:

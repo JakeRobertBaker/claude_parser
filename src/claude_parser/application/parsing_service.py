@@ -41,9 +41,7 @@ class ParsingService:
                 )
                 break
 
-            self.state.prepare_next(
-                self.config.batch_tokens, self.config.context_lines
-            )
+            self.state.prepare_next(self.config.batch_tokens, self.config.context_lines)
             self.batch_tools.prepare()
             seq = self.state.current_id
 
@@ -90,7 +88,7 @@ class ParsingService:
             clean_line_count = len(clean_text.splitlines())
 
             # Domain: parse and validate annotations
-            events = parse_annotations(clean_text)
+            events = parse_annotations(clean_text, open_stack=self.state.open_stack)
 
             validation = validate_annotations(
                 events,

@@ -1,8 +1,8 @@
 """MCP server providing batch processing tools for Haiku.
 
-Tools: read_batch, submit_clean, submit_result.
+Tools: read_batch, submit_clean, commit_batch.
 Runs as an SSE server in a background thread. Reads batch data from the
-shared FilesystemStateStore — no intermediate objects passed through the service.
+shared FilesystemStateStore - no intermediate objects passed through the service.
 """
 
 from __future__ import annotations
@@ -27,8 +27,11 @@ from starlette.responses import Response
 from starlette.routing import Mount, Route
 
 from claude_parser.adapters.filesystem_state_store import FilesystemStateStore
+from claude_parser.application.serialization import tree_from_dict, tree_to_dict
 from claude_parser.application.tokens import approximate_claude_tokens
-from claude_parser.domain.annotation_parser import parse_annotations
+from claude_parser.domain.annotation_parser import AnnotationEvent, parse_annotations
+from claude_parser.domain.annotation_tree_builder import process_batch_annotations
+from claude_parser.domain.node import Node, NodeType, TreeDict
 from claude_parser.domain.validator import validate_annotations
 
 logger = logging.getLogger(__name__)
@@ -42,25 +45,82 @@ class _SubmitCleanResponse:
     inferred_cutoff_batch_line: int | None = None
     match_confidence: float | None = None
     raw_context_around_cutoff: list[str] = field(default_factory=list)
-    cleaned_tail_lines: list[str] = field(default_factory=list)
-    unclosed_nodes: list[str] = field(default_factory=list)
+    clean_tail: list[str] = field(default_factory=list)
+    proposed_tree: str = ""
 
 
 _WORD_RE = re.compile(r"[a-z]{4,}")
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _MATH_BLOCK_RE = re.compile(r"\$\$.*?\$\$", re.DOTALL)
 _MATH_INLINE_RE = re.compile(r"\$[^$\n]*?\$")
+_NODE_LINE_RE = re.compile(r"^\s*@\s*-+\s+.*$", re.MULTILINE)
 
 
 def _content_tokens(text: str) -> list[str]:
     """Extract normalized content words: lowercased, alphabetic, length >= 4.
 
-    Strips HTML comments and LaTeX math to avoid structural/math noise.
+    Strips cutoff comments, annotation header lines, and LaTeX math to avoid
+    structural noise during alignment.
     """
     text = _COMMENT_RE.sub(" ", text)
+    text = _NODE_LINE_RE.sub(" ", text)
     text = _MATH_BLOCK_RE.sub(" ", text)
     text = _MATH_INLINE_RE.sub(" ", text)
     return _WORD_RE.findall(text.lower())
+
+
+def _node_label(node: Node) -> str:
+    label = node.id
+    details: list[str] = []
+    if node.node_type != NodeType.GENERIC:
+        if node.node_type == NodeType.PRF and node._proves_id:
+            details.append(f"proof -> {node._proves_id}")
+        else:
+            details.append(node.node_type.value)
+    if node._dependency_ids:
+        details.append(f"deps: {', '.join(node._dependency_ids)}")
+    if details:
+        label += f" [{'; '.join(details)}]"
+    return label
+
+
+def _render_tree_lines(root: Node) -> list[tuple[str, str]]:
+    lines: list[tuple[str, str]] = []
+
+    def walk(node: Node, prefix: str, is_last: bool, is_root: bool = False) -> None:
+        if is_root:
+            lines.append((node.id, _node_label(node)))
+        else:
+            connector = "└── " if is_last else "├── "
+            lines.append((node.id, f"{prefix}{connector}{_node_label(node)}"))
+
+        child_prefix = prefix + ("    " if is_last else "│   ")
+        for i, child in enumerate(node.children):
+            walk(child, child_prefix, i == len(node.children) - 1)
+
+    walk(root, "", True, is_root=True)
+    return lines
+
+
+def _tree_preview(
+    tree_dict: TreeDict, trace_ids: list[str], cap_non_trace: int = 100
+) -> str:
+    root = tree_dict.root_node
+    if root is None:
+        return ""
+
+    all_lines = _render_tree_lines(root)
+    trace_set = set(trace_ids)
+    preview_lines: list[str] = []
+    non_trace_kept = 0
+    for node_id, line in all_lines:
+        if node_id in trace_set:
+            preview_lines.append(line)
+            continue
+        if non_trace_kept < cap_non_trace:
+            preview_lines.append(line)
+            non_trace_kept += 1
+    return "\n".join(preview_lines)
 
 
 def _infer_cutoff_line(
@@ -109,7 +169,7 @@ def _find_free_port() -> int:
 
 
 class BatchMCPServer:
-    """MCP server with read_batch, submit_clean, submit_result tools.
+    """MCP server with read_batch, submit_clean, commit_batch tools.
 
     Reads batch data directly from the shared FilesystemStateStore.
     ParsingService calls prepare() before each LLM invocation,
@@ -139,14 +199,9 @@ class BatchMCPServer:
                     {
                         "name": "read_batch",
                         "description": (
-                            "Get the raw batch and its metadata. "
-                            "Response fields: raw_content (str), "
-                            "batch_line_count (int, number of lines in raw_content), "
-                            "unclosed_nodes (list[str], outer-to-inner, nodes still open "
-                            "from prior batches — continue or close them), "
-                            "prior_clean_tail (str, last cleaned lines for context), "
-                            "known_ids (list[str], all node ids defined in prior batches — "
-                            "do NOT reuse), memory_text (str, persistent notes)."
+                            "Read current raw batch and context. "
+                            "Returns raw_content, batch_line_count, current_tree, "
+                            "prior_clean_tail, known_ids, memory_text."
                         ),
                         "inputSchema": {"type": "object", "properties": {}},
                         "_meta": {"anthropic/maxResultSizeChars": 500000},
@@ -155,22 +210,9 @@ class BatchMCPServer:
                 mcp_types.Tool(
                     name="submit_clean",
                     description=(
-                        "Submit cleaned, annotated markdown for this batch. "
-                        "Include only content up to your cutoff — do NOT append raw "
-                        "remainder. The server validates annotations (IDs, nesting) "
-                        "and infers the raw cutoff line by aligning your cleaned "
-                        "text's content tokens against raw_content. "
-                        "Response fields: "
-                        "valid (bool), errors (list[str]), warnings (list[str]), "
-                        "inferred_cutoff_batch_line (int, 1-indexed within batch — "
-                        "pass this to commit_batch), "
-                        "match_confidence (float 0-1, fraction of cleaned tokens "
-                        "aligned to raw; <0.6 is rejected), "
-                        "raw_context_around_cutoff (list[str], raw lines near the "
-                        "inferred cutoff so you can verify), "
-                        "cleaned_tail_lines (list[str], last lines you submitted), "
-                        "unclosed_nodes (list[str], outer-to-inner, nodes carrying "
-                        "to next batch). If valid=false, fix and resubmit."
+                        "Submit cleaned markdown with @-depth annotations. "
+                        "Returns validation, inferred cutoff, raw context, clean tail, "
+                        "and proposed_tree. If invalid, fix and resubmit."
                     ),
                     inputSchema={
                         "type": "object",
@@ -190,9 +232,8 @@ class BatchMCPServer:
                     name="commit_batch",
                     description=(
                         "Finalize this batch. Call AFTER submit_clean returns valid. "
-                        "By default the server uses the inferred_cutoff_batch_line "
-                        "from your last submit_clean. Pass cutoff_batch_line only "
-                        "to override it (e.g. inferred line sits mid-paragraph). "
+                        "By default the server uses the inferred cutoff from your "
+                        "last submit_clean. Pass cutoff_batch_line only to override it. "
                         'Response: {"status": "ok"}.'
                     ),
                     inputSchema={
@@ -233,7 +274,7 @@ class BatchMCPServer:
         data = {
             "raw_content": s.current_raw_content,
             "batch_line_count": s.current_raw_line_count,
-            "unclosed_nodes": s.open_stack,
+            "current_tree": _tree_preview(s.tree_dict, s.open_stack),
             "prior_clean_tail": s.current_prior_clean_tail,
             "known_ids": s.current_known_ids,
             "memory_text": s.current_memory_text,
@@ -258,8 +299,8 @@ class BatchMCPServer:
         if response.match_confidence is not None:
             data["match_confidence"] = round(response.match_confidence, 3)
         data["raw_context_around_cutoff"] = response.raw_context_around_cutoff
-        data["cleaned_tail_lines"] = response.cleaned_tail_lines
-        data["unclosed_nodes"] = response.unclosed_nodes
+        data["clean_tail"] = response.clean_tail
+        data["proposed_tree"] = response.proposed_tree
         return [
             mcp_types.TextContent(
                 type="text", text=json.dumps(data, ensure_ascii=False)
@@ -305,7 +346,7 @@ class BatchMCPServer:
                 f"(this is a soft warning, not an error)"
             )
 
-        events = parse_annotations(cleaned_text)
+        events = parse_annotations(cleaned_text, open_stack=s.open_stack)
         known = set(s.current_known_ids)
         validation = validate_annotations(
             events, known_ids=known, open_stack=s.open_stack
@@ -335,7 +376,7 @@ class BatchMCPServer:
             )
             return _SubmitCleanResponse(valid=False, errors=errors, warnings=warnings)
 
-        # Compute unclosed nodes (start with carried-over open stack)
+        # Compute open stack after applying this batch's events.
         stack: list[str] = list(s.open_stack)
         for event in events:
             if event.event_type == "start":
@@ -366,6 +407,8 @@ class BatchMCPServer:
         cleaned_lines = cleaned_text.splitlines()
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
 
+        proposed_tree = self._build_proposed_tree_preview(events, cleaned_text)
+
         return _SubmitCleanResponse(
             valid=False if errors else True,
             errors=errors,
@@ -373,9 +416,33 @@ class BatchMCPServer:
             inferred_cutoff_batch_line=cutoff_line,
             match_confidence=confidence,
             raw_context_around_cutoff=[line.rstrip("\n") for line in raw_context],
-            cleaned_tail_lines=clean_tail,
-            unclosed_nodes=stack,
+            clean_tail=clean_tail,
+            proposed_tree=proposed_tree,
         )
+
+    def _build_proposed_tree_preview(
+        self, events: list[AnnotationEvent], cleaned_text: str
+    ) -> str:
+        s = self._state_store
+        tree_dict_copy = TreeDict()
+
+        if s.tree_dict.root_node is not None:
+            tree_snapshot = tree_to_dict(s.tree_dict.root_node)
+            _, tree_dict_copy = tree_from_dict(tree_snapshot)
+
+        cleaned_line_count = len(cleaned_text.splitlines())
+        try:
+            fragment = process_batch_annotations(
+                events,
+                tree_dict_copy,
+                s.open_stack,
+                s.current_ordinal,
+                cleaned_line_count,
+            )
+        except Exception:
+            return _tree_preview(s.tree_dict, s.open_stack)
+
+        return _tree_preview(tree_dict_copy, fragment.open_stack)
 
     # -- Public API for ParsingService --
 
