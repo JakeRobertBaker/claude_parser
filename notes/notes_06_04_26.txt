@@ -1,0 +1,43 @@
+## Tool `read-batch`
+Input schema remains empty.
+Output schema via `_handle_read_batch` changes
+- `raw_content` we still want.
+- `batch_line_count` I am unsure, maybe it give Haiku a reasonable idea of it's cutoff point? Can we do without?
+- `prior_clean_tail`, still want.
+- `unclosed_nodes` is dropped and replaced with new item `current_tree`.
+
+````
+book
+├── ch_1
+│   ...
+└── ch_x
+    ├── preamble
+    ├── thm_a
+    │   ├── thm_1_23 [theorem; deps: lem_1_18]
+    │   ├── thm_a_remarks [remark]
+    │   └── thm_1_23_proof [proof -> thm_1_23; deps: lem_1_18]
+    └── more_remarks [remark]
+````
+
+`current_tree` contains the full trace of the latest `@ -...` node. Each line in the preview is a node. Let's cap the number of lines that are not in the latest node trace at 100.
+
+Haiku can decide whether the first content of the new batch is under the last `@ -...` or whether a new node is required.
+
+Question, could we drop the Tool description? Should that be in the prompt template instead? Are the tool descriptions too verbose and not fully applicable to things post changes?
+
+## Tool "submit clean"
+Input schema remains just "cleaned_text".
+Output schema:
+- Keep `valid`, `errors`, `raw_context_around_cutoff`, `cleaned_tail_lines=clean_tail`
+- Is `inferred_cutoff_batch_line` needed? Haiku wants to confirm the MCP has correctly identified where the cuttoff aligns?
+- `unclosed_nodes` can be removed. Do we output a similar tree preview maybe call it `proposed_tree` as it is the tree after Haiku confirms.
+
+Question, is Haiku encouraged to genuinely compare `raw_context_around_cutoff=` and `cleaned_tail_lines=clean_tail` before confirming?
+
+Question, I see that submit clean writes files even if validation fails. Maybe this is fine and helps debug. If there is a error and Haiku resubmits after it correct's itself. Do we have an any issues?
+
+## Tool "submit confirm"
+I think the input schema can stay the same and the description.
+
+## New Tool Change Node depth.
+A tool that allows Haiku to change the depth of a existing node. It would alter the state.
