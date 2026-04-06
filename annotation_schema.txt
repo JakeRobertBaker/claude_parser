@@ -1,0 +1,112 @@
+# Annotation Schema
+
+Haiku cleans markdown and annotates it with text that defines a tree.
+
+## Basic Form
+```
+@ ---- id="thm_1_23_proof" type="proof" proves="thm_1_23" deps=["lem_1_18"]
+Theorem A Proof
+```
+
+## Attributes
+- id (required, global unique identifier)
+- title (optional)
+- type (optional; only for semantic math units, allowed values below)
+- proves (optional; id of the statement we are proving, only for type="proof")
+- deps (optional; comma separated list of prerequisite node ids)
+
+Valid types:
+definition, theorem, lemma, proposition, corollary, proof, remark, example, exercise, axiom
+
+## Rules:
+
+- Nesting is the source of structure.
+- IDs must be globally unique across all batches. Never reuse IDs from `known_ids` in `read_batch` response.
+- Containers such as chapters, sections, and subsections have no `type`.
+- Use `type` only when the node’s text span is itself a semantic object such as a theorem, lemma, remark, or proof. For example, a theorem statement has `type="theorem"`, but a subsection named after the theorem is still a container; related discussion should be represented as separate child nodes.
+- Proofs are separate nodes with `type="proof"` and `proves="<id>"`.
+- Use `deps=[...]` only for real prerequisite nodes that the proof cites or that are needed to understand the material.
+- `title` is optional. Include it only when it helps rendering or navigation.
+
+## Validator
+Outputs a warning if any of these happen, there may be very rare permissible cases.
+
+- If non proof node has `proves`.
+- If proof node does not have `proves` value.
+- If `proves` points towards type other than (theorem|lemma|proposition|corollary).
+- If `dependencies` points to node if that does note exist.
+
+Outputs an error if any of are violated:
+- Unique ids
+
+## Example:
+raw
+
+```markdown
+# Book Title
+# Chapter X
+## Theorem A
+Preamble
+Theorem 1.23: Theorem A
+Statement of Theorem A
+Remarks
+Theorem A Proof
+More Remarks
+```
+
+Note, this example can have many interpretations. Annotation picks one interpretation.
+
+Interpretation A
+
+ch_x
+├── preamble (content=Preamble)
+├── thm_a (content=Statement of Theorem A, type="theorem")
+├── remarks (content=Remarks, type="remark")
+├── thm_a_proof (content=Theorem A Proof, type="proof", proves="thm_a")
+└── more_remarks (content=More Remarks, type="remark")
+
+Interpretation B
+
+ch_x
+├── preamble (content=Preamble)
+├── thm_a (no content)
+│   ├── thm_1_23 (content=Statement of Theorem A, type="theorem", deps=[lem_1_18])
+│   ├── thm_a_remarks (content=Remarks, type="remark")
+│   ├── thm_1_23_proof (content=Theorem A Proof, type="proof", proves="thm_1_23")
+└── more_remarks (content=More Remarks, type="remark")
+
+Inline version of Interpretation B
+```
+@ - id="book" title="Book Title"
+@ -- id="ch_x" title="Chapter X"
+
+@ --- id="preamble" title="Preamble"
+Preamble
+
+@ --- id="thm_a" title="Theorem A"
+
+@ ---- id="thm_1_23" type="theorem" deps=["lem_1_18"]
+Statement of Theorem A
+
+@ ---- id="thm_a_remarks" type="remark"
+Remarks
+
+@ ---- id="thm_1_23_proof" type="proof" proves="thm_1_23" deps=["lem_1_18"]
+Theorem A Proof
+
+@ --- id="more_remarks" title="Concluding Remarks" type="remark"
+More Remarks
+```
+
+
+The preview would look like
+````
+book
+└── ch_x
+    ├── preamble
+    ├── thm_a
+    │   ├── thm_1_23 [theorem; deps: lem_1_18]
+    │   ├── thm_a_remarks [remark]
+    │   └── thm_1_23_proof [proof -> thm_1_23; deps: lem_1_18]
+    └── more_remarks [remark]
+````

@@ -32,8 +32,7 @@ Statement of the theorem...
 
 - **Nesting is structure.** A child node lives strictly between its parent's
   start and end comments. No crossing spans.
-- **IDs are globally unique** across all batches. The `read_batch` response
-  lists `known_ids` from previous batches — never reuse them.
+- **IDs are globally unique** across all batches. The `read_batch` response lists `known_ids` from previous batches — never reuse them.
 - **Containers have no `type`.** Chapters, sections, subsections, and
   "container" wrappers (e.g. a theorem-block that groups a statement + its
   proof) must omit `type`.
