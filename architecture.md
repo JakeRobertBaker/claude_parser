@@ -43,7 +43,6 @@ cli.py → adapters/ → application/ → ports/ → domain/
 src/claude_parser/
 ├── cli.py                              # Composition root: wires adapters into ports
 ├── config.py                           # ParserConfig dataclass
-├── validator_cli.py                    # CLI for annotation validator (manual use)
 │
 ├── domain/                             # Pure business logic, ZERO external deps
 │   ├── node.py                         # Node, TreeDict, NodeType — core tree entities
@@ -62,7 +61,6 @@ src/claude_parser/
 │
 ├── application/                        # Use-case orchestration
 │   ├── parsing_service.py              # ParsingService — pure orchestration loop
-│   ├── merge.py                        # Legacy chunk merging (kept for reference)
 │   ├── serialization.py                # Tree ↔ dict serialization (used by service + adapters)
 │   ├── llm_response_parser.py          # Extract JSON from Claude's stream-json output
 │   ├── prompt_builder.py               # Prompt assembly from templates

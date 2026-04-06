@@ -40,4 +40,4 @@ Question, I see that submit clean writes files even if validation fails. Maybe t
 I think the input schema can stay the same and the description.
 
 ## New Tool Change Node depth.
-A tool that allows Haiku to change the depth of a existing node. It would alter the state.
+A tool that allows Haiku to change the depth of a existing node. It would alter the state_store. This would change the clean_i.md files in these comments by adding or removing a `-` in the `@-...` comments. I assume we would need to be very careful to ensure the right design here, this affect state tree dict. 
