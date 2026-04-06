@@ -3,7 +3,10 @@ import logging
 from claude_parser.application.prompt_builder import build_batch_prompt
 from claude_parser.config import ParserConfig
 from claude_parser.domain.annotation_parser import parse_annotations
-from claude_parser.domain.annotation_tree_builder import process_batch_annotations
+from claude_parser.domain.annotation_tree_builder import (
+    has_visible_nodes,
+    process_batch_annotations,
+)
 from claude_parser.domain.validator import validate_annotations
 from claude_parser.ports.batch_tools import BatchToolsPort
 from claude_parser.ports.llm import LLMPort
@@ -88,12 +91,13 @@ class ParsingService:
             clean_line_count = len(clean_text.splitlines())
 
             # Domain: parse and validate annotations
-            events = parse_annotations(clean_text, open_stack=self.state.open_stack)
+            events = parse_annotations(clean_text)
 
             validation = validate_annotations(
                 events,
                 known_ids=set(self.state.known_ids),
-                open_stack=self.state.open_stack,
+                cleaned_text=clean_text,
+                has_existing_nodes=has_visible_nodes(self.state.tree_dict),
             )
             if not validation.valid:
                 self.state.write_failure(result.stdout)
@@ -109,10 +113,9 @@ class ParsingService:
 
             # Domain: build/extend tree
             try:
-                fragment = process_batch_annotations(
+                apply_result = process_batch_annotations(
                     events,
                     self.state.tree_dict,
-                    self.state.open_stack,
                     self.state.current_ordinal,
                     clean_line_count,
                 )
@@ -124,14 +127,13 @@ class ParsingService:
                 ) from e
 
             # Advance state (saves, commits)
-            self.state.advance(fragment)
+            self.state.advance()
 
             logger.info(
-                "[%s] Done. new=%d closed=%d open=%d",
+                "[%s] Done. added=%d active_depth=%d",
                 seq,
-                len(fragment.new_nodes),
-                len(fragment.closed_nodes),
-                len(fragment.open_stack),
+                apply_result.added_nodes,
+                apply_result.active_depth,
             )
 
         logger.info("Main loop complete.")

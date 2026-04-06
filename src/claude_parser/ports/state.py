@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from claude_parser.domain.annotation_tree_builder import FragmentResult
     from claude_parser.domain.node import TreeDict
 
 
@@ -27,9 +26,6 @@ class StatePort(Protocol):
     def current_ordinal(self) -> int: ...
 
     @property
-    def open_stack(self) -> list[str]: ...
-
-    @property
     def known_ids(self) -> list[str]: ...
 
     @property
@@ -37,7 +33,7 @@ class StatePort(Protocol):
 
     def prepare_next(self, batch_tokens: int, context_lines: int) -> None: ...
 
-    def advance(self, fragment: FragmentResult) -> None: ...
+    def advance(self) -> None: ...
 
     # -- Clean batches (current batch) --
     def clean_batch_exists(self) -> bool: ...

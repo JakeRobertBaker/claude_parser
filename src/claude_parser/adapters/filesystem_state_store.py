@@ -11,7 +11,10 @@ import subprocess
 
 from claude_parser.application.serialization import tree_from_dict, tree_to_dict
 from claude_parser.application.tokens import approximate_claude_tokens
-from claude_parser.domain.annotation_tree_builder import FragmentResult
+from claude_parser.domain.annotation_tree_builder import (
+    INTERNAL_ROOT_ID,
+    ensure_internal_root,
+)
 from claude_parser.domain.node import Node, TreeDict
 
 logger = logging.getLogger(__name__)
@@ -30,9 +33,6 @@ class FilesystemStateStore:
         self._next_start_line: int = 0
         self._next_chunk_id: int = 0
         self._sections_completed: int = 0
-        self._open_stack: list[str] = []
-        self._pending_edges: dict[str, list[str]] = {}
-        self._last_closed_node_id: str | None = None
         self._tree_dict: TreeDict = TreeDict()
         self._root: Node | None = None
 
@@ -105,9 +105,6 @@ class FilesystemStateStore:
         self._next_start_line = data["next_start_line"]
         self._next_chunk_id = data["next_chunk_id"]
         self._sections_completed = data.get("sections_completed", 0)
-        self._open_stack = data.get("open_stack", [])
-        self._pending_edges = data.get("pending_edges", {})
-        self._last_closed_node_id = data.get("last_closed_node_id")
 
     def _load_saved_tree(self) -> None:
         if not os.path.exists(self._tree_path):
@@ -116,6 +113,7 @@ class FilesystemStateStore:
         root, tree_dict = tree_from_dict(data)
         self._root = root
         self._tree_dict = tree_dict
+        self._root = ensure_internal_root(self._tree_dict)
 
     # -- Progression (StatePort) --
 
@@ -138,12 +136,12 @@ class FilesystemStateStore:
         return self._current_ordinal
 
     @property
-    def open_stack(self) -> list[str]:
-        return list(self._open_stack)
-
-    @property
     def known_ids(self) -> list[str]:
-        return list(self._tree_dict._data.keys())
+        return [
+            node_id
+            for node_id in self._tree_dict._data.keys()
+            if node_id != INTERNAL_ROOT_ID
+        ]
 
     @property
     def tree_dict(self) -> TreeDict:
@@ -181,12 +179,7 @@ class FilesystemStateStore:
 
     @property
     def current_known_ids(self) -> list[str]:
-        return list(self._tree_dict._data.keys())
-
-    @property
-    def is_final_batch(self) -> bool:
-        """True if this batch covers the remainder of the source file."""
-        return self._current_raw_end >= len(self._raw_lines)
+        return self.known_ids
 
     # -- Batch lifecycle --
 
@@ -210,7 +203,9 @@ class FilesystemStateStore:
         self._current_raw_start = start
         self._current_raw_end = end
         self._current_raw_line_count = end - start
-        self._current_prior_clean_tail = self._get_prior_clean_tail(ordinal, context_lines)
+        self._current_prior_clean_tail = self._get_prior_clean_tail(
+            ordinal, context_lines
+        )
         self._current_memory_text = self._read_memory()
         self._current_min_tokens = int(approximate_claude_tokens(raw_content) * 0.5)
         self._current_cutoff = None
@@ -225,16 +220,15 @@ class FilesystemStateStore:
             min(source_line, self._current_raw_end),
         )
 
-    def advance(self, fragment: FragmentResult) -> None:
-        assert self._current_cutoff is not None, "set_cutoff must be called before advance"
+    def advance(self) -> None:
+        assert self._current_cutoff is not None, (
+            "set_cutoff must be called before advance"
+        )
 
         self._next_start_line = self._current_cutoff
         self._next_chunk_id += 1
         self._sections_completed += 1
-        self._open_stack = fragment.open_stack
-        self._last_closed_node_id = fragment.last_closed_node_id
-
-        if self._root is None and self._tree_dict.root_node is not None:
+        if self._tree_dict.root_node is not None:
             self._root = self._tree_dict.root_node
 
         self._save_state()
@@ -329,9 +323,6 @@ class FilesystemStateStore:
             "next_start_line": self._next_start_line,
             "next_chunk_id": self._next_chunk_id,
             "sections_completed": self._sections_completed,
-            "open_stack": self._open_stack,
-            "pending_edges": self._pending_edges,
-            "last_closed_node_id": self._last_closed_node_id,
         }
         self._write_json(self._state_path, data)
 
@@ -367,7 +358,11 @@ class FilesystemStateStore:
         self, cmd: list[str], check: bool = True
     ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            cmd, cwd=self.state_dir, capture_output=True, text=True, check=check,
+            cmd,
+            cwd=self.state_dir,
+            capture_output=True,
+            text=True,
+            check=check,
         )
 
     # -- JSON helpers --

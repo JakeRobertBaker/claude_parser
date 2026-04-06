@@ -1,10 +1,9 @@
-"""Parse inline tree annotations from markdown text.
+"""Parse depth-marked annotation headers from cleaned markdown.
 
-Node headers use the new depth-marked form:
+Node headers use the form:
     @ --- id="node_id" title="Node Title" [type="theorem"] [deps=["a"]]
 
-Depth transitions generate implicit start/end events. The parser still reads
-the explicit cutoff marker:
+The parser also recognizes the explicit cutoff marker:
     <!-- cutoff -->
 """
 
@@ -17,16 +16,16 @@ from dataclasses import dataclass, field
 @dataclass
 class AnnotationEvent:
     line_number: int  # 1-indexed
-    event_type: str  # "start" | "end" | "cutoff"
-    id: str  # required for start/end, empty for cutoff
-    title: str | None = None  # required on start
+    event_type: str  # "header" | "cutoff"
+    id: str = ""  # required for header
+    depth: int = 0  # required for header (visible depth: '-'=1, '--'=2, ...)
+    title: str | None = None
     node_type: str | None = None
     proves: str | None = None
     deps: list[str] = field(default_factory=list)
 
 
 _ATTR_RE = re.compile(r'(\w+)=("[^"]*"|\[[^\]]*\]|[^\s]+)')
-
 _NODE_RE = re.compile(r"^\s*@\s*(-+)\s+(.*?)\s*$")
 _CUTOFF_RE = re.compile(r"<!--\s*cutoff\s*-->")
 
@@ -55,18 +54,9 @@ def _parse_deps(value: str | None) -> list[str]:
     return deps
 
 
-def parse_annotations(
-    text: str, open_stack: list[str] | None = None
-) -> list[AnnotationEvent]:
-    """Parse start/end/cutoff events from depth-marked annotation headers.
-
-    Args:
-        text: Cleaned markdown with inline annotation headers.
-        open_stack: IDs already open from prior batches (outer-to-inner).
-            Used to resolve implicit closes when current batch depth decreases.
-    """
+def parse_annotations(text: str) -> list[AnnotationEvent]:
+    """Parse header/cutoff events from cleaned markdown."""
     events: list[AnnotationEvent] = []
-    stack = list(open_stack) if open_stack else []
 
     for line_number, line in enumerate(text.splitlines(), start=1):
         if _CUTOFF_RE.search(line):
@@ -74,7 +64,6 @@ def parse_annotations(
                 AnnotationEvent(
                     line_number=line_number,
                     event_type="cutoff",
-                    id="",
                 )
             )
             break
@@ -89,31 +78,17 @@ def parse_annotations(
         if not node_id:
             continue
 
-        while len(stack) >= depth:
-            events.append(
-                AnnotationEvent(
-                    line_number=line_number,
-                    event_type="end",
-                    id=stack.pop(),
-                )
-            )
-
-        deps_value = attrs.get("deps")
-        if deps_value is None:
-            deps_value = attrs.get("dependencies")
-        deps = _parse_deps(deps_value)
-
         events.append(
             AnnotationEvent(
                 line_number=line_number,
-                event_type="start",
+                event_type="header",
                 id=node_id,
+                depth=depth,
                 title=attrs.get("title"),
                 node_type=attrs.get("type"),
                 proves=attrs.get("proves"),
-                deps=deps,
+                deps=_parse_deps(attrs.get("deps")),
             )
         )
-        stack.append(node_id)
 
     return events

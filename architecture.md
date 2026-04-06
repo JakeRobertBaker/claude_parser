@@ -103,7 +103,7 @@ service = ParsingService(
 )
 ```
 
-`ParsingService` only sees the port shapes. It calls `self.state.prepare_next(...)`, `self.llm.invoke(...)`, `self.state.advance(fragment)` — never knowing whether it's talking to Claude, a mock, or something else entirely. No data objects flow between state and batch_tools — they share a reference and communicate directly. State owns all progression logic (line tracking, batch computation, tree persistence, git commit). The service does pure orchestration: prepare → invoke LLM → run domain logic → advance.
+`ParsingService` only sees the port shapes. It calls `self.state.prepare_next(...)`, `self.llm.invoke(...)`, `self.state.advance()` — never knowing whether it's talking to Claude, a mock, or something else entirely. No data objects flow between state and batch_tools - they share a reference and communicate directly. State owns all progression logic (line tracking, batch computation, tree persistence, git commit). The service does pure orchestration: prepare → invoke LLM → run domain logic → advance.
 
 ## End-to-End Flow
 
@@ -124,7 +124,7 @@ Main Loop:  while not state.complete
         → service checks batch_tools.succeeded()
         → service reads clean file, runs domain logic:
             → parse_annotations → validate_annotations → process_batch_annotations
-        → state.advance(fragment) — uses stored cutoff, saves state + tree, commits
+        → state.advance() — uses stored cutoff, saves state + tree, commits
 
 Final:  → concatenate clean files → final.md
      →  stop MCP server
@@ -146,6 +146,8 @@ Attributes: `id` (required), `title` (optional), `type` (optional semantic type)
 
 Nesting is defined by depth (`-`, `--`, `---`, ...). A `<!-- cutoff -->` comment
 still marks where cleaning stops inside each clean batch file.
+Internally, the tree is rooted at a hidden depth-0 node so multiple top-level
+`@ - ...` nodes are valid siblings.
 
 ## Ports & Adapters Analogy
 

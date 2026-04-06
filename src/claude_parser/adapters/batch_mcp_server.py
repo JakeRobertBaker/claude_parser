@@ -30,7 +30,13 @@ from claude_parser.adapters.filesystem_state_store import FilesystemStateStore
 from claude_parser.application.serialization import tree_from_dict, tree_to_dict
 from claude_parser.application.tokens import approximate_claude_tokens
 from claude_parser.domain.annotation_parser import AnnotationEvent, parse_annotations
-from claude_parser.domain.annotation_tree_builder import process_batch_annotations
+from claude_parser.domain.annotation_tree_builder import (
+    INTERNAL_ROOT_ID,
+    active_trace_ids,
+    has_visible_nodes,
+    process_batch_annotations,
+    visible_roots,
+)
 from claude_parser.domain.node import Node, NodeType, TreeDict
 from claude_parser.domain.validator import validate_annotations
 
@@ -84,11 +90,11 @@ def _node_label(node: Node) -> str:
     return label
 
 
-def _render_tree_lines(root: Node) -> list[tuple[str, str]]:
+def _render_tree_lines(roots: list[Node]) -> list[tuple[str, str]]:
     lines: list[tuple[str, str]] = []
 
-    def walk(node: Node, prefix: str, is_last: bool, is_root: bool = False) -> None:
-        if is_root:
+    def walk(node: Node, prefix: str, is_last: bool, plain: bool = False) -> None:
+        if plain:
             lines.append((node.id, _node_label(node)))
         else:
             connector = "└── " if is_last else "├── "
@@ -98,19 +104,24 @@ def _render_tree_lines(root: Node) -> list[tuple[str, str]]:
         for i, child in enumerate(node.children):
             walk(child, child_prefix, i == len(node.children) - 1)
 
-    walk(root, "", True, is_root=True)
+    if len(roots) == 1:
+        root = roots[0]
+        walk(root, "", True, plain=True)
+        return lines
+
+    for i, root in enumerate(roots):
+        walk(root, "", i == len(roots) - 1, plain=False)
     return lines
 
 
-def _tree_preview(
-    tree_dict: TreeDict, trace_ids: list[str], cap_non_trace: int = 100
-) -> str:
-    root = tree_dict.root_node
-    if root is None:
+def _tree_preview(tree_dict: TreeDict, cap_non_trace: int = 100) -> str:
+    roots = visible_roots(tree_dict)
+    if not roots:
         return ""
 
-    all_lines = _render_tree_lines(root)
-    trace_set = set(trace_ids)
+    all_lines = _render_tree_lines(roots)
+    trace_set = set(active_trace_ids(tree_dict))
+    trace_set.discard(INTERNAL_ROOT_ID)
     preview_lines: list[str] = []
     non_trace_kept = 0
     for node_id, line in all_lines:
@@ -180,6 +191,7 @@ class BatchMCPServer:
         self._state_store = state_store
         self._state_dir = os.path.abspath(state_dir)
         self._submitted: bool = False
+        self._last_submit_valid: bool = False
         self._inferred_cutoff_line: int | None = None
         self._port = _find_free_port()
         self._thread: threading.Thread | None = None
@@ -274,7 +286,7 @@ class BatchMCPServer:
         data = {
             "raw_content": s.current_raw_content,
             "batch_line_count": s.current_raw_line_count,
-            "current_tree": _tree_preview(s.tree_dict, s.open_stack),
+            "current_tree": _tree_preview(s.tree_dict),
             "prior_clean_tail": s.current_prior_clean_tail,
             "known_ids": s.current_known_ids,
             "memory_text": s.current_memory_text,
@@ -289,6 +301,7 @@ class BatchMCPServer:
         cleaned_text: str = args["cleaned_text"]
 
         response = self._validate_and_write_clean(cleaned_text)
+        self._last_submit_valid = response.valid
         data: dict[str, Any] = {
             "valid": response.valid,
             "errors": response.errors,
@@ -311,7 +324,7 @@ class BatchMCPServer:
         cutoff_batch_line = args.get("cutoff_batch_line")
         if cutoff_batch_line is None:
             cutoff_batch_line = self._inferred_cutoff_line
-        if cutoff_batch_line is None:
+        if cutoff_batch_line is None or not self._last_submit_valid:
             return [
                 mcp_types.TextContent(
                     type="text",
@@ -319,8 +332,8 @@ class BatchMCPServer:
                         {
                             "status": "error",
                             "error": (
-                                "No cutoff available. Call submit_clean successfully "
-                                "first, or pass cutoff_batch_line explicitly."
+                                "No valid submit_clean available. Call submit_clean "
+                                "until valid=true before commit_batch."
                             ),
                         }
                     ),
@@ -346,10 +359,13 @@ class BatchMCPServer:
                 f"(this is a soft warning, not an error)"
             )
 
-        events = parse_annotations(cleaned_text, open_stack=s.open_stack)
+        events = parse_annotations(cleaned_text)
         known = set(s.current_known_ids)
         validation = validate_annotations(
-            events, known_ids=known, open_stack=s.open_stack
+            events,
+            known_ids=known,
+            cleaned_text=cleaned_text,
+            has_existing_nodes=has_visible_nodes(s.tree_dict),
         )
         errors.extend(validation.errors)
         warnings.extend(validation.warnings)
@@ -376,24 +392,6 @@ class BatchMCPServer:
             )
             return _SubmitCleanResponse(valid=False, errors=errors, warnings=warnings)
 
-        # Compute open stack after applying this batch's events.
-        stack: list[str] = list(s.open_stack)
-        for event in events:
-            if event.event_type == "start":
-                stack.append(event.id)
-            elif event.event_type == "end" and stack and stack[-1] == event.id:
-                stack.pop()
-
-        # Soft warning: if more source content follows, the outermost
-        # container should usually remain open so content can continue.
-        if not stack and not s.is_final_batch:
-            warnings.append(
-                "You closed every node, but more of the source document "
-                "follows in later batches. If the outermost container "
-                "(book, chapter, current section) continues past your "
-                "cutoff, leave it OPEN so content carries to the next batch."
-            )
-
         if cleaned_text and not cleaned_text.endswith("\n"):
             cleaned_text += "\n"
 
@@ -407,7 +405,12 @@ class BatchMCPServer:
         cleaned_lines = cleaned_text.splitlines()
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
 
-        proposed_tree = self._build_proposed_tree_preview(events, cleaned_text)
+        proposed_tree = _tree_preview(s.tree_dict)
+        if not errors:
+            try:
+                proposed_tree = self._build_proposed_tree_preview(events, cleaned_text)
+            except (ValueError, KeyError) as exc:
+                errors.append(f"Could not build proposed_tree: {exc}")
 
         return _SubmitCleanResponse(
             valid=False if errors else True,
@@ -431,23 +434,19 @@ class BatchMCPServer:
             _, tree_dict_copy = tree_from_dict(tree_snapshot)
 
         cleaned_line_count = len(cleaned_text.splitlines())
-        try:
-            fragment = process_batch_annotations(
-                events,
-                tree_dict_copy,
-                s.open_stack,
-                s.current_ordinal,
-                cleaned_line_count,
-            )
-        except Exception:
-            return _tree_preview(s.tree_dict, s.open_stack)
-
-        return _tree_preview(tree_dict_copy, fragment.open_stack)
+        process_batch_annotations(
+            events,
+            tree_dict_copy,
+            s.current_ordinal,
+            cleaned_line_count,
+        )
+        return _tree_preview(tree_dict_copy)
 
     # -- Public API for ParsingService --
 
     def prepare(self) -> None:
         self._submitted = False
+        self._last_submit_valid = False
         self._inferred_cutoff_line = None
 
     def succeeded(self) -> bool:
