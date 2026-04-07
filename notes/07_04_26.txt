@@ -5,6 +5,32 @@ I have some concerns
 
 ### Components Split
 
+Fundamentally this project splits into components
+
+1. Pure Node domain. Abstract python objects I built to represent Trees with Content. I believe that this is used by both the Parsing Service and MCP server to in validation. If they are valid then then they can pass into Node objects. 
+
+2. The parsing service which maintains a State representing the parsed text as we clean each batch.
+
+3. The MCP server which the Parsing Service starts up. The MCP server validates what Haiku is doing as it works. Currently the batch tools port is vauge and the details are all in the adapter. I raise this as a concern below.
+
+Check whether my assertions are correct and feedback any misunderstandings.
+
+Is there a better directory structure here. I want to maintain the rules that
+
+```
+Domain       — entities, value objects, business rules (depends on nothing)
+Ports        — interfaces defining how the app talks to infrastructure
+Application  — use-case orchestration (the "glue")
+Adapters     — infrastructure implementations of ports
+```
+
+Maybe we consider the MCP and Parsing Service two applications?
+Or is some of the logic here domain logic?
+
+At a basic level I think each of the components should probably live in separate directories. I am not sure everything living in one domain/ports/adapters/appliation folder works.
+
+In particular I am not sure that the MCP app should just be one .py file. Is it better practise to have separate dir for routes etc.
+
 ### MCP Server uses filesystem adapter
 
 My original intention behind `FilesystemStateStore`adapter was that maybe I would want to store the raw and clean text in a different way, sqldatabase, s3 etc.
@@ -12,11 +38,15 @@ However, the MCP server talks to the FilesystemStateStore specifically, not a ge
 
 I think we need to redesign this codebase. Some examples of what we probably want
 
-- `s.current_known_ids` in `_validate_and_write_clean` in another way. The MCP can jus tdo self.stae.current_known_ids.
+- `s.current_known_ids` in `_validate_and_write_clean` makes sense currently. However I think this is an example of something that should be fundamental to the state, not a file store adapter. 
 
-- `self._state_store.set_cutoff(source_line)` in `_handle_commit_batch` still uses a state method like this.
+- `self._state_store.set_cutoff(source_line)` in `_handle_commit_batch` still uses a state method like this. For the current ordinal/id we set the cutoff of the raw text.
 
+Fundamentally here I wonder if State here is actually a domain object. It contains the ideas and methods of how we handle our parsing text. Maybe this State domain object can have a Storage port?
 
 ## Other Concers
 
 Do we still need `src/application/llm_response_parser.py`? Our Haiku agent should commit when complete to the MCP and that handles any outputs. Is there anything still being used by stdout? Can that be moved to MCP submitting to the state.
+
+## Task
+Read and understand the codebase.
