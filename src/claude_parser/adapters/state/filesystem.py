@@ -9,6 +9,7 @@ import logging
 import os
 import subprocess
 
+from claude_parser.application.run_engine import BatchPlan, RunEngine, RunSnapshot
 from claude_parser.application.serialization import tree_from_dict, tree_to_dict
 from claude_parser.application.tokens import approximate_claude_tokens
 from claude_parser.domain.annotation_tree_builder import (
@@ -30,20 +31,16 @@ class FilesystemStateStore:
         self._resume = resume
 
         # Internal progression state
+        self._engine = RunEngine(approximate_claude_tokens)
+        self._snapshot: RunSnapshot = RunSnapshot()
         self._raw_lines: list[str] = []
-        self._next_start_line: int = 0
-        self._next_chunk_id: int = 0
-        self._sections_completed: int = 0
         self._tree_dict: TreeDict = TreeDict()
         self._root: Node | None = None
 
         # Current batch state (set by prepare_next, consumed by MCP server + service)
+        self._current_plan: BatchPlan | None = None
         self._current_id: str = ""
         self._current_ordinal: int = 0
-        self._current_raw_content: str = ""
-        self._current_raw_start: int = 0
-        self._current_raw_end: int = 0
-        self._current_raw_line_count: int = 0
         self._current_prior_clean_tail: str = ""
         self._current_memory_text: str = ""
         self._current_min_tokens: int = 0
@@ -103,9 +100,11 @@ class FilesystemStateStore:
         if not os.path.exists(self._state_path):
             return
         data = self._read_json(self._state_path)
-        self._next_start_line = data["next_start_line"]
-        self._next_chunk_id = data["next_chunk_id"]
-        self._sections_completed = data.get("sections_completed", 0)
+        self._snapshot = RunSnapshot(
+            next_start_line=data["next_start_line"],
+            next_chunk_id=data["next_chunk_id"],
+            sections_completed=data.get("sections_completed", 0),
+        )
 
     def _load_saved_tree(self) -> None:
         if not os.path.exists(self._tree_path):
@@ -120,11 +119,11 @@ class FilesystemStateStore:
 
     @property
     def complete(self) -> bool:
-        return self._next_start_line >= len(self._raw_lines)
+        return self._engine.complete(self._snapshot, len(self._raw_lines))
 
     @property
     def sections_completed(self) -> int:
-        return self._sections_completed
+        return self._snapshot.sections_completed
 
     # -- Current batch properties (StatePort) --
 
@@ -151,50 +150,55 @@ class FilesystemStateStore:
     # -- Batch lifecycle --
 
     def prepare_next(self, batch_tokens: int, context_lines: int) -> None:
-        start = self._next_start_line
-        end = self._compute_batch_end(start, batch_tokens)
-        ordinal = self._next_chunk_id
-        chunk_id = f"chunk_{ordinal:03d}"
+        plan = self._engine.plan_next(
+            self._snapshot,
+            self._raw_lines,
+            batch_tokens,
+        )
 
-        raw_content = "".join(self._raw_lines[start:end])
+        self._current_plan = plan
+        self._current_id = plan.chunk_id
+        self._current_ordinal = plan.ordinal
 
-        # Write raw batch file for reference
-        path = os.path.join(self._raw_dir, f"raw_{ordinal}.md")
+        path = os.path.join(self._raw_dir, f"raw_{plan.ordinal}.md")
         with open(path, "w", encoding="utf-8") as f:
-            f.write(raw_content)
+            f.write(plan.raw_content)
 
-        # Store current batch state
-        self._current_id = chunk_id
-        self._current_ordinal = ordinal
-        self._current_raw_content = raw_content
-        self._current_raw_start = start
-        self._current_raw_end = end
-        self._current_raw_line_count = end - start
         self._current_prior_clean_tail = self._get_prior_clean_tail(
-            ordinal, context_lines
+            plan.ordinal, context_lines
         )
         self._current_memory_text = self._read_memory()
-        self._current_min_tokens = int(approximate_claude_tokens(raw_content) * 0.5)
+        self._current_min_tokens = plan.min_tokens
         self._current_cutoff = None
 
-        logger.info("[%s] Processing raw lines %d–%d", chunk_id, start + 1, end)
+        logger.info(
+            "[%s] Processing raw lines %d–%d",
+            plan.chunk_id,
+            plan.start_line + 1,
+            plan.end_line,
+        )
 
     def get_batch_context(self) -> BatchContext:
+        if self._current_plan is None:
+            raise RuntimeError(
+                "prepare_next must be called before accessing batch context."
+            )
+        plan = self._current_plan
         return BatchContext(
-            raw_content=self._current_raw_content,
-            raw_start_line=self._current_raw_start,
-            raw_end_line=self._current_raw_end,
-            raw_line_count=self._current_raw_line_count,
+            raw_content=plan.raw_content,
+            raw_start_line=plan.start_line,
+            raw_end_line=plan.end_line,
+            raw_line_count=plan.raw_line_count,
             prior_clean_tail=self._current_prior_clean_tail,
             memory_text=self._current_memory_text,
             min_tokens=self._current_min_tokens,
         )
 
     def set_cutoff(self, source_line: int) -> None:
-        # Clamp to batch bounds
-        self._current_cutoff = max(
-            self._current_raw_start + 1,
-            min(source_line, self._current_raw_end),
+        if self._current_plan is None:
+            raise RuntimeError("Cannot set cutoff without an active batch plan.")
+        self._current_cutoff = self._engine.clamp_cutoff(
+            self._current_plan, source_line
         )
 
     def advance(self) -> None:
@@ -202,9 +206,8 @@ class FilesystemStateStore:
             "set_cutoff must be called before advance"
         )
 
-        self._next_start_line = self._current_cutoff
-        self._next_chunk_id += 1
-        self._sections_completed += 1
+        self._snapshot = self._engine.advance(self._snapshot, self._current_cutoff)
+        self._current_plan = None
         if self._tree_dict.root_node is not None:
             self._root = self._tree_dict.root_node
 
@@ -212,14 +215,6 @@ class FilesystemStateStore:
         if self._root is not None:
             self._save_tree()
         self.commit_all(self._current_id)
-
-    def _compute_batch_end(self, start: int, batch_tokens: int) -> int:
-        tokens = 0
-        for i in range(start, len(self._raw_lines)):
-            tokens += approximate_claude_tokens(self._raw_lines[i])
-            if tokens >= batch_tokens:
-                return i + 1
-        return len(self._raw_lines)
 
     # -- Clean batches (current batch) --
 
@@ -297,9 +292,9 @@ class FilesystemStateStore:
 
     def _save_state(self) -> None:
         data = {
-            "next_start_line": self._next_start_line,
-            "next_chunk_id": self._next_chunk_id,
-            "sections_completed": self._sections_completed,
+            "next_start_line": self._snapshot.next_start_line,
+            "next_chunk_id": self._snapshot.next_chunk_id,
+            "sections_completed": self._snapshot.sections_completed,
         }
         self._write_json(self._state_path, data)
 

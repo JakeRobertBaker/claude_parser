@@ -2,45 +2,57 @@
 
 ## Architecture
 
-Hexagonal architecture — see `architecture.md` for full details. The critical rule:
+We follow strict hexagonal architecture. Full details live in `architecture.md`, but remember the single golden rule:
 
-**Dependencies point inward: `cli → adapters → application → ports → domain`**
+**Dependencies must point inward:** `cli → adapters → application → ports → domain`
 
-- `domain/` has ZERO imports from other layers
-- `application/` depends on domain + ports only — never import adapters here
-- `adapters/` implement port protocols — may import `application/serialization`
-- `cli.py` is the composition root — the only place concrete adapters are wired into ports
+- `domain/` contains only math/tree business rules — it imports nothing else.
+- `ports/` define Protocols (LLM, State, BatchTools) that mention domain types but nothing concrete.
+- `application/` implements orchestration and shared policies (parsing loop, batch tools service, run engine, serialization, prompt building). It never imports adapters.
+- `adapters/` implement ports (Claude CLI, filesystem state store, MCP transport). They may import application helpers such as serialization or the run engine models.
+- `cli.py` is the composition root — the one place concrete adapters are chosen.
 
-**State owns progression.** `StatePort` manages batch computation, line tracking, tree persistence, and version control. `ParsingService` is pure orchestration — it calls `state.prepare_next()`, runs domain logic, then calls `state.advance()`. It never touches line numbers, cutoff values, or batch presentation data.
+**State progression stays in StatePort + RunEngine.** `RunEngine` (application layer) computes batch plans, clamps cutoffs, and advances `RunSnapshot`. Each `StatePort` implementation (filesystem today) delegates those rules while handling persistence (raw/clean files, tree snapshot, git). `ParsingService` only calls `prepare_next`, checks `clean_batch_exists`, reads the clean text, and calls `advance` after domain validation succeeds.
 
-**Batch tools use the same state port.** The MCP adapter delegates all validation/alignment to `BatchToolsService`, which talks to `StatePort` via `get_batch_context()` and `set_cutoff()`. No extra repositories or DTO layers are used between the application service and adapters.
+**Batch tools share the same state.** `BatchToolsService` obtains batch context via `state.get_batch_context()`, writes clean files via `state.write_clean_batch()`, and records the cutoff with `state.set_cutoff()`. The MCP adapter itself is just transport glue that exposes `BatchToolsService.tool_specs()` and `BatchToolsService.call_tool()` over SSE.
 
-When adding a new feature:
-- New business rules → `domain/`
-- New infrastructure (API, DB, etc.) → create a port in `ports/`, implement in `adapters/`
-- New orchestration logic → `application/`
-- Never have `ParsingService` import from `adapters/`
+When adding functionality:
+- New domain rules → `domain/`
+- New orchestration / policies → `application/`
+- New infrastructure (alternate state store, MCP transport, different LLM) → add a port implementation inside `adapters/`
+- Never let `ParsingService` or `BatchToolsService` import adapter modules.
 
 ## MCP Tools
 
-Haiku uses 3 MCP tools (no built-in Read/Write/Bash):
-- `read_batch` — no args. Returns `raw_content`, `batch_line_count`, `current_tree`, `prior_clean_tail`, `known_ids`, `memory_text`. Uses `maxResultSizeChars: 500000` to avoid truncation.
-- `submit_clean` — `cleaned_text` → server validates annotations and infers the raw cutoff line via token-sequence alignment. Returns `inferred_cutoff_batch_line`, `match_confidence`, `raw_context_around_cutoff`, `clean_tail`, and `proposed_tree`.
-- `commit_batch` — no args by default (server uses its stored inferred cutoff). Optional `cutoff_batch_line` to override. Writes cutoff to state via `set_cutoff()` and marks batch complete.
+Haiku uses three MCP tools (no built-in Read/Write/Bash). The payloads are JSON blobs encoded inside a `TextContent` response.
 
-Open nodes across batches are supported — Haiku can leave nodes unclosed at cutoff. The server emits a soft warning (not an error) if all nodes are closed but the cutoff is mid-batch.
+1. `read_batch()` — returns `raw_content`, `batch_line_count`, `current_tree` (ASCII preview), `prior_clean_tail`, `known_ids`, and `memory_text`. `_meta.anthropic.maxResultSizeChars` is set to 500000 so Claude does not truncate large batches.
+2. `submit_clean(cleaned_text)` — validates annotations, enforces a soft ≥50% token target, infers the cutoff line via token alignment, appends `<!-- cutoff -->`, writes the clean file, and returns `inferred_cutoff_batch_line`, `match_confidence`, `raw_context_around_cutoff`, `clean_tail`, and `proposed_tree`.
+3. `commit_batch(cutoff_batch_line?)` — finalizes the batch. If no override is provided it uses the inferred cutoff stored during the last successful `submit_clean`.
 
-The MCP server (`adapters/mcp/server.py`) runs as SSE on localhost. It wraps `BatchToolsService`, so all validation and cutoff alignment live in the application layer while the adapter handles transport. Version control is still internal to `FilesystemStateStore` (no separate VCS port).
+Open nodes across batches are supported: Haiku simply leaves them unclosed and they reappear in the `current_tree` preview. Warnings (e.g., proofs without `proves`) do not block commit — but errors (duplicate IDs, alignment failures) do.
+
+The MCA transport lives in `adapters/mcp/server.py`. It runs an SSE server on localhost, writes a per-run `mcp_config.json`, and defers all tool semantics to `BatchToolsService`.
 
 ## Annotation Schema
 
-The canonical spec lives in `annotation_schema.txt` (project root). The prompt template in `src/claude_parser/application/prompt_templates.py` embeds a condensed version Haiku needs at runtime.
+`annotation_schema.txt` (project root) contains the authoritative spec. The condensed runtime version is embedded in `src/claude_parser/application/prompt_templates.py`. Haiku emits annotation headers of the form:
+
+```markdown
+@ -- id="sec01" title="1.2 Limits"
+@ --- id="thm_1_5" type="theorem"
+Statement...
+@ --- id="thm_1_5_proof" type="proof" proves="thm_1_5"
+Proof...
+```
+
+`<!-- cutoff -->` marks where each clean batch ends. Root nodes without types act as structural containers (chapters, sections, etc.). Proof spans must always have `type="proof"` plus a `proves` attribute.
 
 ## Commands
 
 ```bash
-uv run pytest tests/                  # tests
+uv run pytest tests/                  # unit tests
 uv run ruff check src/ tests/         # lint
-uv run ruff check --fix src/ tests/   # lint with auto-fix
+uv run ruff check --fix src/ tests/   # lint w/ auto-fix
 uv run ty check src/ tests/           # type checking
 ```

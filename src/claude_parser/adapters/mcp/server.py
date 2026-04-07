@@ -8,7 +8,6 @@ import logging
 import os
 import socket
 import threading
-from dataclasses import asdict
 from typing import Any
 
 import mcp.types as mcp_types
@@ -79,99 +78,31 @@ class BatchMCPServer(BatchToolsPort):
 
         @server.list_tools()
         async def list_tools() -> list[mcp_types.Tool]:
-            return [
-                mcp_types.Tool.model_validate(
-                    {
-                        "name": "read_batch",
-                        "description": (
-                            "Read current raw batch and context. Returns raw_content, batch_line_count, "
-                            "current_tree, prior_clean_tail, known_ids, memory_text."
-                        ),
-                        "inputSchema": {"type": "object", "properties": {}},
-                        "_meta": {"anthropic/maxResultSizeChars": 500000},
-                    }
-                ),
-                mcp_types.Tool(
-                    name="submit_clean",
-                    description=(
-                        "Submit cleaned markdown with annotations. Returns validation info, inferred cutoff, "
-                        "raw context, clean tail, and proposed_tree."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "cleaned_text": {
-                                "type": "string",
-                                "description": (
-                                    "Cleaned markdown up to the cutoff (exclude raw content after cutoff)."
-                                ),
-                            }
-                        },
-                        "required": ["cleaned_text"],
-                    },
-                ),
-                mcp_types.Tool(
-                    name="commit_batch",
-                    description=(
-                        "Finalize this batch. Call after submit_clean succeeds. Optional cutoff_batch_line overrides the inferred cutoff."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "cutoff_batch_line": {
-                                "type": "integer",
-                                "description": "1-indexed raw line within this batch where cleaning stops.",
-                            }
-                        },
-                    },
-                ),
-            ]
+            tools: list[mcp_types.Tool] = []
+            for spec in self._service.tool_specs():
+                payload = {
+                    "name": spec.name,
+                    "description": spec.description,
+                    "inputSchema": spec.input_schema,
+                }
+                if spec.meta:
+                    payload["_meta"] = spec.meta
+                tools.append(mcp_types.Tool.model_validate(payload))
+            return tools
 
         @server.call_tool()
         async def call_tool(
             name: str, arguments: dict[str, Any]
         ) -> list[mcp_types.TextContent]:
-            if name == "read_batch":
-                return self._handle_read_batch()
-            if name == "submit_clean":
-                return self._handle_submit_clean(arguments)
-            if name == "commit_batch":
-                return self._handle_commit_batch(arguments)
-            return [mcp_types.TextContent(type="text", text=f"Unknown tool: {name}")]
-
-    def _handle_read_batch(self) -> list[mcp_types.TextContent]:
-        payload = self._service.build_read_batch_payload()
-        data = asdict(payload)
-        return [
-            mcp_types.TextContent(
-                type="text", text=json.dumps(data, ensure_ascii=False)
-            )
-        ]
-
-    def _handle_submit_clean(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
-        cleaned_text: str = args["cleaned_text"]
-        result = self._service.handle_submit_clean(cleaned_text)
-        data = asdict(result)
-        if data["match_confidence"] is not None:
-            data["match_confidence"] = round(data["match_confidence"], 3)
-        return [
-            mcp_types.TextContent(
-                type="text", text=json.dumps(data, ensure_ascii=False)
-            )
-        ]
-
-    def _handle_commit_batch(self, args: dict[str, Any]) -> list[mcp_types.TextContent]:
-        cutoff = args.get("cutoff_batch_line")
-        result = self._service.handle_commit_batch(cutoff)
-        if result.success:
-            response = {"status": "ok"}
-        else:
-            response = {"status": "error", "error": result.error}
-        return [
-            mcp_types.TextContent(
-                type="text", text=json.dumps(response, ensure_ascii=False)
-            )
-        ]
+            try:
+                data = self._service.call_tool(name, arguments)
+            except ValueError as exc:
+                data = {"status": "error", "error": str(exc)}
+            return [
+                mcp_types.TextContent(
+                    type="text", text=json.dumps(data, ensure_ascii=False)
+                )
+            ]
 
     # -- Server lifecycle helpers --
 

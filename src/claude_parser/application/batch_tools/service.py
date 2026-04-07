@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict, dataclass
+from typing import Any
 
 from claude_parser.application.batch_tools.cutoff_alignment import infer_cutoff_line
 from claude_parser.application.batch_tools.models import (
@@ -37,6 +39,28 @@ class BatchToolsService:
 
     def succeeded(self) -> bool:
         return self._submitted
+
+    def tool_specs(self) -> list[ToolSpec]:
+        return _TOOL_SPECS
+
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name == "read_batch":
+            payload = self.build_read_batch_payload()
+            return asdict(payload)
+        if name == "submit_clean":
+            cleaned_text = arguments["cleaned_text"]
+            result = self.handle_submit_clean(cleaned_text)
+            data = asdict(result)
+            if data["match_confidence"] is not None:
+                data["match_confidence"] = round(data["match_confidence"], 3)
+            return data
+        if name == "commit_batch":
+            cutoff = arguments.get("cutoff_batch_line")
+            result = self.handle_commit_batch(cutoff)
+            if result.success:
+                return {"status": "ok"}
+            return {"status": "error", "error": result.error}
+        raise ValueError(f"Unknown tool: {name}")
 
     def build_read_batch_payload(self) -> ReadBatchPayload:
         context = self._state.get_batch_context()
@@ -184,3 +208,58 @@ class BatchToolsService:
             cleaned_line_count,
         )
         return tree_preview(tree_dict_copy)
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    meta: dict[str, Any] | None = None
+
+
+_TOOL_SPECS: list[ToolSpec] = [
+    ToolSpec(
+        name="read_batch",
+        description=(
+            "Read current raw batch and context. Returns raw_content, batch_line_count, "
+            "current_tree, prior_clean_tail, known_ids, memory_text."
+        ),
+        input_schema={"type": "object", "properties": {}},
+        meta={"anthropic/maxResultSizeChars": 500000},
+    ),
+    ToolSpec(
+        name="submit_clean",
+        description=(
+            "Submit cleaned markdown with annotations. Returns validation info, inferred cutoff, "
+            "raw context, clean tail, and proposed_tree."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "cleaned_text": {
+                    "type": "string",
+                    "description": (
+                        "Cleaned markdown up to the cutoff (exclude raw content after cutoff)."
+                    ),
+                }
+            },
+            "required": ["cleaned_text"],
+        },
+    ),
+    ToolSpec(
+        name="commit_batch",
+        description=(
+            "Finalize this batch. Call after submit_clean succeeds. Optional cutoff_batch_line overrides the inferred cutoff."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "cutoff_batch_line": {
+                    "type": "integer",
+                    "description": "1-indexed raw line within this batch where cleaning stops.",
+                }
+            },
+        },
+    ),
+]
