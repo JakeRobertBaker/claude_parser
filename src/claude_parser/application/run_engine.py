@@ -28,6 +28,8 @@ class BatchPlan:
 
 
 class RunEngine:
+    """Pure state machine for batch planning and advancement."""
+
     def __init__(self, token_counter: TokenCounter):
         self._token_counter = token_counter
 

@@ -1,3 +1,5 @@
+"""Typed payloads exchanged between BatchToolsService and transports."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -6,6 +8,8 @@ from typing import Any
 
 @dataclass(slots=True)
 class ReadBatchPayload:
+    """Response body for `read_batch` (raw context + metadata preview)."""
+
     raw_content: str
     batch_line_count: int
     current_tree: str
@@ -16,6 +20,8 @@ class ReadBatchPayload:
 
 @dataclass(slots=True)
 class SubmitCleanResult:
+    """Validation + alignment result produced by `submit_clean`."""
+
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -28,6 +34,8 @@ class SubmitCleanResult:
 
 @dataclass(slots=True)
 class CommitResult:
+    """Response body for `commit_batch`."""
+
     success: bool
     error: str | None = None
 

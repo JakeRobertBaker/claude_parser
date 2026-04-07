@@ -9,6 +9,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class BatchContext:
+    """Snapshot of batch metadata exposed to parsing + MCP services."""
+
     raw_content: str
     raw_start_line: int
     raw_end_line: int
@@ -19,6 +21,8 @@ class BatchContext:
 
 
 class StatePort(Protocol):
+    """Abstraction for run progression, persistence, and batch artifacts."""
+
     # -- Lifecycle --
     def init(self) -> None: ...
     def init_repo(self) -> None: ...

@@ -1,3 +1,5 @@
+"""High-level orchestration for the parsing loop."""
+
 import logging
 
 from claude_parser.application.prompt_builder import build_batch_prompt
@@ -16,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 class ParsingService:
+    """Runs the prepare → LLM → validate → advance loop for each batch."""
+
     def __init__(
         self,
         config: ParserConfig,

@@ -1,3 +1,5 @@
+"""Application service that powers MCP tools (read/submit/commit)."""
+
 from __future__ import annotations
 
 import logging

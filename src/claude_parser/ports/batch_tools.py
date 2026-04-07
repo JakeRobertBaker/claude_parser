@@ -1,7 +1,11 @@
+"""Protocol for MCP transport adapters (SSE, stdio, etc.)."""
+
 from typing import Protocol
 
 
 class BatchToolsPort(Protocol):
+    """Transport lifecycle around BatchToolsService."""
+
     def prepare(self) -> None: ...
 
     def succeeded(self) -> bool: ...

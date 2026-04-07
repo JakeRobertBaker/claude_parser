@@ -59,7 +59,7 @@ src/claude_parser/
 │   ├── llm/claude_cli.py
 │   ├── state/filesystem.py             # Filesystem + git + RunEngine integration
 │   └── mcp/server.py                   # SSE transport over BatchToolsService
-└── tests/                              # Domain + serialization coverage
+└── tests/                              # Domain + serialization coverage (tree/content/validator)
 ```
 
 ## Wiring
@@ -101,6 +101,17 @@ Loop per batch:
 7. state.advance() persists new snapshot/tree and commits git (filesystem adapter detail)
 
 After loop: state.read_all_clean_before_cutoff() concatenates cleaned batches → state.write_final()
+
+### Where artifacts live
+
+`FilesystemStateStore` keeps everything inside `state_dir/`:
+
+- `raw/raw_{ordinal}.md` — raw slices handed to Haiku
+- `clean/clean_{ordinal}.md` — cleaned batches ending with `<!-- cutoff -->`
+- `logs/{chunk_id}.json` and `failures/{chunk_id}_raw_response.txt` — stdout snapshots for success/failure
+- `tree.json` / `state.json` — serialized RunSnapshot + annotation tree
+- `memory.md` — optional context surfaced via `read_batch`
+- `final.md` — concatenated clean output once the run completes
 ```
 
 ## MCP Overview

@@ -1,15 +1,21 @@
+"""Protocol describing the minimal interface for LLM adapters."""
+
 from dataclasses import dataclass
 from typing import Protocol
 
 
 @dataclass
 class LLMResult:
+    """Normalized response from an LLM invocation."""
+
     stdout: str
     success: bool
     stderr: str = ""
 
 
 class LLMPort(Protocol):
+    """Capability abstraction for invoking an LLM task agent."""
+
     def invoke(
         self,
         prompt: str,
