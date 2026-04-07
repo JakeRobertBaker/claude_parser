@@ -49,4 +49,10 @@ Fundamentally here I wonder if State here is actually a domain object. It contai
 Do we still need `src/application/llm_response_parser.py`? Our Haiku agent should commit when complete to the MCP and that handles any outputs. Is there anything still being used by stdout? Can that be moved to MCP submitting to the state.
 
 ## Task
-Read and understand the codebase.
+Read and understand the codebase. CLAUDE.md and architecture.md will help, check these two files for any mistakes.
+
+Plan, propose, finalise and agree a new structure with me. You must address and answer all of my concerns.
+
+After I confirm move to implementation.
+
+After implementation do `uv run pytest tests/`, `uv run ruff check src/ tests/`, `uv run ty check src/ tests/`.

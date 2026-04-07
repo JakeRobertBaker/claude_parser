@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from claude_parser.domain.node import TreeDict
+
+
+@dataclass(frozen=True)
+class BatchContext:
+    raw_content: str
+    raw_start_line: int
+    raw_end_line: int
+    raw_line_count: int
+    prior_clean_tail: str
+    memory_text: str
+    min_tokens: int
 
 
 class StatePort(Protocol):
@@ -34,6 +46,10 @@ class StatePort(Protocol):
     def prepare_next(self, batch_tokens: int, context_lines: int) -> None: ...
 
     def advance(self) -> None: ...
+
+    def get_batch_context(self) -> BatchContext: ...
+
+    def set_cutoff(self, source_line: int) -> None: ...
 
     # -- Clean batches (current batch) --
     def clean_batch_exists(self) -> bool: ...

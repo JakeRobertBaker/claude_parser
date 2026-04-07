@@ -60,23 +60,27 @@ src/claude_parser/
 │   └── batch_tools.py                  # BatchToolsPort — MCP tool server lifecycle
 │
 ├── application/                        # Use-case orchestration
-│   ├── parsing_service.py              # ParsingService — pure orchestration loop
+│   ├── parsing/                        # Parsing loop
+│   │   └── service.py                  # ParsingService — pure orchestration loop
+│   ├── batch_tools/                    # MCP tool workflows
+│   │   ├── service.py                  # BatchToolsService — validates + infers cutoff
+│   │   ├── cutoff_alignment.py         # Token alignment helpers
+│   │   ├── tree_preview.py             # ASCII tree previews
+│   │   └── models.py                   # Dataclasses returned to MCP clients
 │   ├── serialization.py                # Tree ↔ dict serialization (used by service + adapters)
-│   ├── llm_response_parser.py          # Extract JSON from Claude's stream-json output
 │   ├── prompt_builder.py               # Prompt assembly from templates
 │   └── prompt_templates.py             # ANNOTATION_BATCH_TEMPLATE
 │
 ├── adapters/                           # Infrastructure implementations
-│   ├── claude_cli.py                   # LLMPort impl — wraps `claude` CLI via subprocess
-│   ├── filesystem_state_store.py       # StatePort impl — state.json + tree.json + git on disk
-│   └── batch_mcp_server.py            # BatchToolsPort impl — MCP SSE server with 3 tools
+│   ├── llm/claude_cli.py               # LLMPort impl — wraps `claude` CLI via subprocess
+│   ├── state/filesystem.py             # StatePort impl — state.json + tree.json + git on disk
+│   └── mcp/server.py                  # BatchToolsPort impl — SSE transport wired to BatchToolsService
 
 tests/
 ├── test_tree.py                        # Node construction, ordering rules, propagation
 ├── test_content.py                     # Content ordering, ContentPartition overlap checks
 ├── test_json_adapter.py                # Tree deserialization from fixture files
 ├── test_serialization_roundtrip.py     # Serialize → deserialize → verify identity
-├── test_merge.py                       # merge_chunk, validate_metadata, dependency report
 ├── test_annotation_parser.py           # Parse start/end/cutoff events from markdown
 ├── test_validator.py                   # Nesting errors, duplicate IDs, proves warnings
 └── test_annotation_tree_builder.py     # Fragment AST: single batch, cross-batch, cutoff

@@ -2,10 +2,10 @@ import argparse
 import logging
 import sys
 
-from claude_parser.adapters.batch_mcp_server import BatchMCPServer
-from claude_parser.adapters.claude_cli import ClaudeCLIAdapter
-from claude_parser.adapters.filesystem_state_store import FilesystemStateStore
-from claude_parser.application.parsing_service import ParsingService
+from claude_parser.adapters.llm.claude_cli import ClaudeCLIAdapter
+from claude_parser.adapters.mcp.server import BatchMCPServer
+from claude_parser.adapters.state.filesystem import FilesystemStateStore
+from claude_parser.application.parsing import ParsingService
 from claude_parser.config import ParserConfig
 
 logger = logging.getLogger("claude_parser")

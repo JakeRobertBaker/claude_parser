@@ -16,6 +16,7 @@ from claude_parser.domain.annotation_tree_builder import (
     ensure_internal_root,
 )
 from claude_parser.domain.node import Node, TreeDict
+from claude_parser.ports.state import BatchContext
 
 logger = logging.getLogger(__name__)
 
@@ -147,40 +148,6 @@ class FilesystemStateStore:
     def tree_dict(self) -> TreeDict:
         return self._tree_dict
 
-    # -- Adapter-specific properties (for MCP server, NOT on protocol) --
-
-    @property
-    def current_raw_content(self) -> str:
-        return self._current_raw_content
-
-    @property
-    def current_raw_start(self) -> int:
-        return self._current_raw_start
-
-    @property
-    def current_raw_end(self) -> int:
-        return self._current_raw_end
-
-    @property
-    def current_raw_line_count(self) -> int:
-        return self._current_raw_line_count
-
-    @property
-    def current_prior_clean_tail(self) -> str:
-        return self._current_prior_clean_tail
-
-    @property
-    def current_memory_text(self) -> str:
-        return self._current_memory_text
-
-    @property
-    def current_min_tokens(self) -> int:
-        return self._current_min_tokens
-
-    @property
-    def current_known_ids(self) -> list[str]:
-        return self.known_ids
-
     # -- Batch lifecycle --
 
     def prepare_next(self, batch_tokens: int, context_lines: int) -> None:
@@ -212,8 +179,18 @@ class FilesystemStateStore:
 
         logger.info("[%s] Processing raw lines %d–%d", chunk_id, start + 1, end)
 
+    def get_batch_context(self) -> BatchContext:
+        return BatchContext(
+            raw_content=self._current_raw_content,
+            raw_start_line=self._current_raw_start,
+            raw_end_line=self._current_raw_end,
+            raw_line_count=self._current_raw_line_count,
+            prior_clean_tail=self._current_prior_clean_tail,
+            memory_text=self._current_memory_text,
+            min_tokens=self._current_min_tokens,
+        )
+
     def set_cutoff(self, source_line: int) -> None:
-        """Called by MCP server when Haiku submits a result. Not on protocol."""
         # Clamp to batch bounds
         self._current_cutoff = max(
             self._current_raw_start + 1,
