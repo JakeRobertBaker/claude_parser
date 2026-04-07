@@ -1,0 +1,22 @@
+## Structural Concerns
+The aim of this project is to have the best practices in structure with domain, ports, adapters, service layer. I have read chapters 1-3 of cosmic python.
+
+I have some concerns
+
+### Components Split
+
+### MCP Server uses filesystem adapter
+
+My original intention behind `FilesystemStateStore`adapter was that maybe I would want to store the raw and clean text in a different way, sqldatabase, s3 etc.
+However, the MCP server talks to the FilesystemStateStore specifically, not a general State port. I think we are fine to assume that generally the split on this project will be different Adapters for model CLI, e.g. OpenCode + some model instead of Claude Haiku with claude_cli.py, different Adapters for the final backend file store.
+
+I think we need to redesign this codebase. Some examples of what we probably want
+
+- `s.current_known_ids` in `_validate_and_write_clean` in another way. The MCP can jus tdo self.stae.current_known_ids.
+
+- `self._state_store.set_cutoff(source_line)` in `_handle_commit_batch` still uses a state method like this.
+
+
+## Other Concers
+
+Do we still need `src/application/llm_response_parser.py`? Our Haiku agent should commit when complete to the MCP and that handles any outputs. Is there anything still being used by stdout? Can that be moved to MCP submitting to the state.
