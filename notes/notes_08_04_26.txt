@@ -1,0 +1,3 @@
+Let me know if you’d like the Claude CLI adapter to take over MCP config generation next, or if we should sketch the future S3/SQLite state stores while the run engine changes are fresh.
+
+Also TODO on the root note validation issue when the LLM forgets to do @ - id book name at the start.
