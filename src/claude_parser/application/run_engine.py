@@ -24,7 +24,8 @@ class BatchPlan:
     end_line: int
     raw_content: str
     raw_line_count: int
-    min_tokens: int
+    raw_token_count: int
+    clean_token_target: int
 
 
 class RunEngine:
@@ -57,7 +58,7 @@ class RunEngine:
         raw_content = "".join(raw_lines[start:end])
         raw_line_count = end - start
         raw_tokens = self._token_counter(raw_content)
-        min_tokens = max(1, int(raw_tokens * 0.5))
+        clean_token_target = max(1, int(raw_tokens * 0.5))
 
         ordinal = snapshot.next_chunk_id
         chunk_id = f"chunk_{ordinal:03d}"
@@ -69,7 +70,8 @@ class RunEngine:
             end_line=end,
             raw_content=raw_content,
             raw_line_count=raw_line_count,
-            min_tokens=min_tokens,
+            raw_token_count=raw_tokens,
+            clean_token_target=clean_token_target,
         )
 
     def clamp_cutoff(self, plan: BatchPlan, source_line: int) -> int:

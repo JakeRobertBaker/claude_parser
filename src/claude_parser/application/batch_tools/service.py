@@ -81,10 +81,10 @@ class BatchToolsService:
         warnings: list[str] = []
 
         cleaned_tokens = approximate_claude_tokens(cleaned_text)
-        if cleaned_tokens < context.min_tokens:
+        if cleaned_tokens < context.clean_token_target:
             warnings.append(
                 "Cleaned text is ~%d tokens, suggested minimum is ~%d tokens (soft warning)."
-                % (cleaned_tokens, context.min_tokens)
+                % (cleaned_tokens, context.clean_token_target)
             )
 
         events = parse_annotations(cleaned_text)

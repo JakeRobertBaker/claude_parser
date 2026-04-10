@@ -168,7 +168,7 @@ class FilesystemStateStore:
             plan.ordinal, context_lines
         )
         self._current_memory_text = self._read_memory()
-        self._current_min_tokens = plan.min_tokens
+        self._current_min_tokens = plan.clean_token_target
         self._current_cutoff = None
 
         logger.info(
@@ -189,9 +189,10 @@ class FilesystemStateStore:
             raw_start_line=plan.start_line,
             raw_end_line=plan.end_line,
             raw_line_count=plan.raw_line_count,
+            raw_token_count=plan.raw_token_count
             prior_clean_tail=self._current_prior_clean_tail,
             memory_text=self._current_memory_text,
-            min_tokens=self._current_min_tokens,
+            clean_token_target=self._current_min_tokens,
         )
 
     def set_cutoff(self, source_line: int) -> None:
