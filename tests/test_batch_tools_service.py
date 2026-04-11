@@ -22,7 +22,8 @@ class _FakeState:
     def tree_dict(self) -> TreeDict:
         return self._tree
 
-    def write_clean_batch(self, content: str) -> None:
+    def write_clean_batch(self, ordinal: int, content: str) -> None:
+        _ = ordinal
         self.written_clean = content
 
     def set_cutoff(self, source_line: int) -> None:

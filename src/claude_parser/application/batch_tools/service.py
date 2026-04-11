@@ -215,7 +215,7 @@ class BatchToolsService:
             cleaned_text += "\n"
 
         full_content = cleaned_text + "<!-- cutoff -->\n"
-        self._state.write_clean_batch(full_content)
+        self._state.write_clean_batch(self._current_ordinal, full_content)
         self._inferred_cutoff_line = cutoff_line
 
         raw_context = raw_lines[

@@ -35,4 +35,14 @@
 - Updated batch-tools tests for explicit session setup.
 - Re-ran quality gates; all passed.
 - Resume integration run succeeded using `/home/jake/ai_tool_development/knowledge_prasing/attempt_states/full_mcp_copy` -> `test_rarefactor3`.
+- Commit: `5292b48 make batch-tools session explicit`
+
+## Stage 4 - StatePort Redesign + Service-Owned Progression
+
+- Replaced `StatePort` with explicit persistence API.
+- Refactored `FilesystemStateStore` to remove hidden current-batch lifecycle state.
+- Rewrote `ParsingService` to own batch planning, context building, cutoff clamp, and snapshot advancement.
+- Updated batch-tools clean-write call and tests for new state API.
+- Re-ran quality gates; all passed.
+- Resume integration run succeeded using `/home/jake/ai_tool_development/knowledge_prasing/attempt_states/full_mcp_copy` -> `test_rarefactor4`.
 - Commit: pending
