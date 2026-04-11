@@ -45,4 +45,13 @@
 - Updated batch-tools clean-write call and tests for new state API.
 - Re-ran quality gates; all passed.
 - Resume integration run succeeded using `/home/jake/ai_tool_development/knowledge_prasing/attempt_states/full_mcp_copy` -> `test_rarefactor4`.
+- Commit: `68df6f7 move run progression fully into parsing service`
+
+## Stage 5 - Class Reduction + Docs Alignment
+
+- Removed `ToolSpec` dataclass; moved tool specs to plain dict constants.
+- Updated MCP server tool registration for dict-based specs.
+- Updated `architecture.md`, `CLAUDE.md`, and `README.md` to reflect current architecture.
+- Re-ran quality gates; all passed.
+- Resume integration run succeeded using `/home/jake/ai_tool_development/knowledge_prasing/attempt_states/full_mcp_copy` -> `test_rarefactor5`.
 - Commit: pending

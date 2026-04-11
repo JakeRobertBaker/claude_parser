@@ -91,12 +91,12 @@ class BatchMCPServer(BatchToolsPort):
             tools: list[mcp_types.Tool] = []
             for spec in self._service.tool_specs():
                 payload = {
-                    "name": spec.name,
-                    "description": spec.description,
-                    "inputSchema": spec.input_schema,
+                    "name": spec["name"],
+                    "description": spec["description"],
+                    "inputSchema": spec["input_schema"],
                 }
-                if spec.meta:
-                    payload["_meta"] = spec.meta
+                if spec.get("meta"):
+                    payload["_meta"] = spec["meta"]
                 tools.append(mcp_types.Tool.model_validate(payload))
             return tools
 

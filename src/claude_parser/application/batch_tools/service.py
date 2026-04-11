@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from typing import Any
 
 from claude_parser.application.batch_tools.cutoff_alignment import infer_cutoff_line
@@ -67,7 +67,7 @@ class BatchToolsService:
     def committed_source_line(self) -> int | None:
         return self._committed_source_line
 
-    def tool_specs(self) -> list[ToolSpec]:
+    def tool_specs(self) -> list[dict[str, Any]]:
         return _TOOL_SPECS
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -306,31 +306,23 @@ class BatchToolsService:
         return tree_preview(tree_dict_copy)
 
 
-@dataclass(frozen=True)
-class ToolSpec:
-    name: str
-    description: str
-    input_schema: dict[str, Any]
-    meta: dict[str, Any] | None = None
-
-
-_TOOL_SPECS: list[ToolSpec] = [
-    ToolSpec(
-        name="read_batch",
-        description=(
+_TOOL_SPECS: list[dict[str, Any]] = [
+    {
+        "name": "read_batch",
+        "description": (
             "Read current raw batch and context. Returns raw_content, batch_line_count, "
             "current_tree, prior_clean_tail, known_ids, memory_text."
         ),
-        input_schema={"type": "object", "properties": {}},
-        meta={"anthropic/maxResultSizeChars": 500000},
-    ),
-    ToolSpec(
-        name="submit_clean",
-        description=(
+        "input_schema": {"type": "object", "properties": {}},
+        "meta": {"anthropic/maxResultSizeChars": 500000},
+    },
+    {
+        "name": "submit_clean",
+        "description": (
             "Submit cleaned markdown with annotations. Returns validation info, inferred cutoff, "
             "raw context, clean tail, and proposed_tree."
         ),
-        input_schema={
+        "input_schema": {
             "type": "object",
             "properties": {
                 "cleaned_text": {
@@ -342,13 +334,13 @@ _TOOL_SPECS: list[ToolSpec] = [
             },
             "required": ["cleaned_text"],
         },
-    ),
-    ToolSpec(
-        name="commit_batch",
-        description=(
+    },
+    {
+        "name": "commit_batch",
+        "description": (
             "Finalize this batch. Call after submit_clean succeeds. Optional cutoff_batch_line overrides the inferred cutoff."
         ),
-        input_schema={
+        "input_schema": {
             "type": "object",
             "properties": {
                 "cutoff_batch_line": {
@@ -357,5 +349,5 @@ _TOOL_SPECS: list[ToolSpec] = [
                 }
             },
         },
-    ),
+    },
 ]
