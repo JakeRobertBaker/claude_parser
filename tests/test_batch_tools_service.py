@@ -9,11 +9,9 @@ from claude_parser.ports.state import BatchContext, StatePort
 
 
 class _FakeState:
-    def __init__(self, context: BatchContext):
-        self._context = context
+    def __init__(self):
         self._known_ids: list[str] = []
         self._tree = TreeDict()
-        self._current_ordinal = 0
         self.written_clean: str | None = None
 
     @property
@@ -23,13 +21,6 @@ class _FakeState:
     @property
     def tree_dict(self) -> TreeDict:
         return self._tree
-
-    @property
-    def current_ordinal(self) -> int:
-        return self._current_ordinal
-
-    def get_batch_context(self) -> BatchContext:
-        return self._context
 
     def write_clean_batch(self, content: str) -> None:
         self.written_clean = content
@@ -55,8 +46,9 @@ def _build_context(raw_content: str, clean_token_target: int = 1) -> BatchContex
 def test_submit_clean_allows_tiny_final_batches() -> None:
     raw_content = "\nAMS on the Web www.ams.org\n"
     context = _build_context(raw_content, clean_token_target=1)
-    state = _FakeState(context)
+    state = _FakeState()
     service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     result = service.handle_submit_clean(
         '@ - id="backmatter_footer"\n\nAMS on the Web www.ams.org\n'
@@ -72,8 +64,9 @@ def test_submit_clean_reports_confidence_and_cutoff_violations_separately() -> N
     line = "alpha bravo charlie delta echo foxtrot golf hotel india juliet\n"
     raw_content = line * 30
     context = _build_context(raw_content, clean_token_target=1)
-    state = _FakeState(context)
+    state = _FakeState()
     service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     first_twenty_tokens = "\n".join([line, line])
     low_overlap_tail = (

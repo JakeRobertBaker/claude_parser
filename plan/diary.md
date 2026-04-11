@@ -25,4 +25,14 @@
 - Updated `tests/test_run_engine.py` to function-based tests.
 - Re-ran quality gates; all passed.
 - Resume integration run succeeded using `/home/jake/ai_tool_development/knowledge_prasing/attempt_states/full_mcp_copy` -> `test_rarefactor2`.
+- Commit: `722dab9 convert run-engine to pure functions`
+
+## Stage 3 - Explicit Batch-Tools Session
+
+- Slimmed `BatchToolsPort` to explicit `begin_batch(...)` + `committed_source_line()`.
+- Refactored `BatchToolsService` to session-first lifecycle and removed direct cutoff mutation.
+- Updated `ParsingService` to apply cutoff explicitly from batch-tools commit output.
+- Updated batch-tools tests for explicit session setup.
+- Re-ran quality gates; all passed.
+- Resume integration run succeeded using `/home/jake/ai_tool_development/knowledge_prasing/attempt_states/full_mcp_copy` -> `test_rarefactor3`.
 - Commit: pending

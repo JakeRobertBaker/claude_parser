@@ -19,8 +19,9 @@ from starlette.responses import Response
 from starlette.routing import Mount, Route
 
 from claude_parser.application.batch_tools import BatchToolsService
+from claude_parser.domain.node import TreeDict
 from claude_parser.ports.batch_tools import BatchToolsPort
-from claude_parser.ports.state import StatePort
+from claude_parser.ports.state import BatchContext, StatePort
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +48,20 @@ class BatchMCPServer(BatchToolsPort):
 
     # -- BatchToolsPort --
 
-    def prepare(self) -> None:
-        self._service.prepare_batch()
+    def begin_batch(
+        self,
+        context: BatchContext,
+        known_ids: list[str],
+        tree_dict: TreeDict,
+        current_ordinal: int,
+    ) -> None:
+        self._service.begin_batch(context, known_ids, tree_dict, current_ordinal)
 
     def succeeded(self) -> bool:
         return self._service.succeeded()
+
+    def committed_source_line(self) -> int | None:
+        return self._service.committed_source_line()
 
     @property
     def mcp_config_path(self) -> str:

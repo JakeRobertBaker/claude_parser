@@ -49,7 +49,13 @@ class ParsingService:
                 break
 
             self.state.prepare_next(self.config.batch_tokens, self.config.context_lines)
-            self.batch_tools.prepare()
+            context = self.state.get_batch_context()
+            self.batch_tools.begin_batch(
+                context=context,
+                known_ids=self.state.known_ids,
+                tree_dict=self.state.tree_dict,
+                current_ordinal=self.state.current_ordinal,
+            )
             seq = self.state.current_id
 
             prompt = build_batch_prompt()
@@ -131,6 +137,15 @@ class ParsingService:
                 ) from e
 
             # Advance state (saves, commits)
+            committed_source_line = self.batch_tools.committed_source_line()
+            if committed_source_line is None:
+                self.state.write_failure(result.stdout)
+                raise RuntimeError(
+                    f"[{seq}] Batch commit did not provide a cutoff source line. "
+                    f"See failures/{seq}_raw_response.txt"
+                )
+
+            self.state.set_cutoff(committed_source_line)
             self.state.advance()
 
             logger.info(
