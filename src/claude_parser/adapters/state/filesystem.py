@@ -10,7 +10,14 @@ import os
 import re
 import subprocess
 
-from claude_parser.application.run_engine import BatchPlan, RunEngine, RunSnapshot
+from claude_parser.application.run_engine import (
+    BatchPlan,
+    RunSnapshot,
+    advance,
+    clamp_cutoff,
+    complete,
+    plan_next,
+)
 from claude_parser.application.serialization import tree_from_dict, tree_to_dict
 from claude_parser.application.tokens import approximate_claude_tokens
 from claude_parser.domain.annotation_tree_builder import (
@@ -33,7 +40,6 @@ class FilesystemStateStore:
         self._resume = resume
 
         # Internal progression state
-        self._engine = RunEngine(approximate_claude_tokens)
         self._snapshot: RunSnapshot = RunSnapshot()
         self._raw_lines: list[str] = []
         self._tree_dict: TreeDict = TreeDict()
@@ -121,7 +127,7 @@ class FilesystemStateStore:
 
     @property
     def complete(self) -> bool:
-        return self._engine.complete(self._snapshot, len(self._raw_lines))
+        return complete(self._snapshot, len(self._raw_lines))
 
     @property
     def sections_completed(self) -> int:
@@ -152,10 +158,11 @@ class FilesystemStateStore:
     # -- Batch lifecycle --
 
     def prepare_next(self, batch_tokens: int, context_lines: int) -> None:
-        plan = self._engine.plan_next(
+        plan = plan_next(
             self._snapshot,
             self._raw_lines,
             batch_tokens,
+            approximate_claude_tokens,
         )
 
         self._current_plan = plan
@@ -200,16 +207,14 @@ class FilesystemStateStore:
     def set_cutoff(self, source_line: int) -> None:
         if self._current_plan is None:
             raise RuntimeError("Cannot set cutoff without an active batch plan.")
-        self._current_cutoff = self._engine.clamp_cutoff(
-            self._current_plan, source_line
-        )
+        self._current_cutoff = clamp_cutoff(self._current_plan, source_line)
 
     def advance(self) -> None:
         assert self._current_cutoff is not None, (
             "set_cutoff must be called before advance"
         )
 
-        self._snapshot = self._engine.advance(self._snapshot, self._current_cutoff)
+        self._snapshot = advance(self._snapshot, self._current_cutoff)
         self._current_plan = None
         if self._tree_dict.root_node is not None:
             self._root = self._tree_dict.root_node

@@ -1,12 +1,18 @@
-from claude_parser.application.run_engine import BatchPlan, RunEngine, RunSnapshot
+from claude_parser.application.run_engine import (
+    BatchPlan,
+    RunSnapshot,
+    advance,
+    clamp_cutoff,
+    complete,
+    plan_next,
+)
 
 
 def test_plan_next_computes_expected_batch_fields() -> None:
-    engine = RunEngine(token_counter=len)
     snapshot = RunSnapshot(next_start_line=0, next_chunk_id=3, sections_completed=2)
     raw_lines = ["aa\n", "bbbb\n", "cc\n"]
 
-    plan = engine.plan_next(snapshot, raw_lines, batch_tokens=5)
+    plan = plan_next(snapshot, raw_lines, batch_tokens=5, token_counter=len)
 
     assert plan == BatchPlan(
         ordinal=3,
@@ -21,13 +27,12 @@ def test_plan_next_computes_expected_batch_fields() -> None:
 
 
 def test_plan_next_raises_when_no_raw_left() -> None:
-    engine = RunEngine(token_counter=len)
-
     try:
-        engine.plan_next(
+        plan_next(
             RunSnapshot(next_start_line=2, next_chunk_id=1, sections_completed=1),
             ["a\n", "b\n"],
             batch_tokens=10,
+            token_counter=len,
         )
     except RuntimeError as exc:
         assert "No raw content left" in str(exc)
@@ -36,7 +41,6 @@ def test_plan_next_raises_when_no_raw_left() -> None:
 
 
 def test_clamp_cutoff_respects_plan_bounds() -> None:
-    engine = RunEngine(token_counter=len)
     plan = BatchPlan(
         ordinal=0,
         chunk_id="chunk_000",
@@ -48,16 +52,15 @@ def test_clamp_cutoff_respects_plan_bounds() -> None:
         clean_token_target=50,
     )
 
-    assert engine.clamp_cutoff(plan, 5) == 11
-    assert engine.clamp_cutoff(plan, 15) == 15
-    assert engine.clamp_cutoff(plan, 99) == 20
+    assert clamp_cutoff(plan, 5) == 11
+    assert clamp_cutoff(plan, 15) == 15
+    assert clamp_cutoff(plan, 99) == 20
 
 
 def test_advance_moves_snapshot_forward() -> None:
-    engine = RunEngine(token_counter=len)
     snapshot = RunSnapshot(next_start_line=0, next_chunk_id=4, sections_completed=9)
 
-    updated = engine.advance(snapshot, cutoff_line=123)
+    updated = advance(snapshot, cutoff_line=123)
 
     assert updated == RunSnapshot(
         next_start_line=123,
@@ -67,7 +70,5 @@ def test_advance_moves_snapshot_forward() -> None:
 
 
 def test_complete_uses_next_start_line() -> None:
-    engine = RunEngine(token_counter=len)
-
-    assert engine.complete(RunSnapshot(next_start_line=5), total_raw_lines=5)
-    assert not engine.complete(RunSnapshot(next_start_line=4), total_raw_lines=5)
+    assert complete(RunSnapshot(next_start_line=5), total_raw_lines=5)
+    assert not complete(RunSnapshot(next_start_line=4), total_raw_lines=5)
