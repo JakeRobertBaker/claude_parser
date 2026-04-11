@@ -26,6 +26,10 @@ from claude_parser.ports.state import StatePort
 
 logger = logging.getLogger(__name__)
 
+_ALIGNMENT_CONFIDENCE_MIN = 0.6
+_ALIGNMENT_MIN_CUTOFF_TOKEN_RATIO = 0.2
+_CLEAN_TOKEN_HARD_WARNING_RATIO = 0.4
+
 
 class BatchToolsService:
     """Application service backing the MCP batch tools."""
@@ -81,10 +85,18 @@ class BatchToolsService:
         warnings: list[str] = []
 
         cleaned_tokens = approximate_claude_tokens(cleaned_text)
-        if cleaned_tokens < context.min_tokens:
+        hard_token_target = max(
+            1, int(context.clean_token_target * _CLEAN_TOKEN_HARD_WARNING_RATIO)
+        )
+        if cleaned_tokens < hard_token_target:
+            warnings.append(
+                "Cleaned text is ~%d tokens, hard minimum is ~%d tokens (hard warning)."
+                % (cleaned_tokens, hard_token_target)
+            )
+        elif cleaned_tokens < context.clean_token_target:
             warnings.append(
                 "Cleaned text is ~%d tokens, suggested minimum is ~%d tokens (soft warning)."
-                % (cleaned_tokens, context.min_tokens)
+                % (cleaned_tokens, context.clean_token_target)
             )
 
         events = parse_annotations(cleaned_text)
@@ -98,27 +110,84 @@ class BatchToolsService:
         warnings.extend(validation.warnings)
 
         raw_lines = context.raw_content.splitlines(keepends=True)
-        inferred = infer_cutoff_line(cleaned_text, raw_lines)
-        if inferred is None:
-            errors.append(
-                "Cleaned text is too short to align with raw content. Submit >=20 content tokens."
-            )
+        alignment = infer_cutoff_line(cleaned_text, raw_lines)
+        if not alignment.ok:
+            if alignment.error_code == "raw_has_no_content_tokens":
+                errors.append(
+                    "Alignment failed: raw batch has 0 alignable content tokens."
+                )
+            elif alignment.error_code == "cleaned_too_short_for_alignment":
+                errors.append(
+                    (
+                        "Alignment failed: cleaned text has %d content tokens, "
+                        "minimum required is %d (derived from raw content token count=%d)."
+                    )
+                    % (
+                        alignment.cleaned_token_count,
+                        alignment.min_cleaned_token_requirement,
+                        alignment.raw_token_count,
+                    )
+                )
+            elif alignment.error_code == "no_token_overlap":
+                errors.append(
+                    (
+                        "Alignment failed: no token overlap between cleaned and raw content "
+                        "(cleaned content tokens=%d, raw content tokens=%d)."
+                    )
+                    % (alignment.cleaned_token_count, alignment.raw_token_count)
+                )
+            else:
+                errors.append("Alignment failed for an unknown reason.")
             return self._finalize_submit(errors, warnings)
 
-        cutoff_line, confidence = inferred
-        min_cutoff = max(1, int(context.raw_line_count * 0.2))
-        if confidence < 0.6 or cutoff_line < min_cutoff:
+        assert alignment.cutoff_line is not None
+        assert alignment.confidence is not None
+        assert alignment.cutoff_token_count is not None
+
+        cutoff_line = alignment.cutoff_line
+        confidence = alignment.confidence
+        min_cutoff_tokens = max(
+            1,
+            int(alignment.raw_token_count * _ALIGNMENT_MIN_CUTOFF_TOKEN_RATIO),
+        )
+
+        if confidence < _ALIGNMENT_CONFIDENCE_MIN:
             errors.append(
                 (
-                    "Could not align cleaned text to raw (confidence=%.2f, inferred_line=%d, batch has %d lines)."
-                    % (confidence, cutoff_line, context.raw_line_count)
+                    "Alignment confidence check failed: confidence=%.3f is below the "
+                    "required minimum %.3f (matched_content_tokens=%d, "
+                    "cleaned_content_tokens=%d, inferred_cutoff_batch_line=%d)."
+                    % (
+                        confidence,
+                        _ALIGNMENT_CONFIDENCE_MIN,
+                        alignment.matched_token_count,
+                        alignment.cleaned_token_count,
+                        cutoff_line,
+                    )
                 )
             )
+
+        if alignment.cutoff_token_count < min_cutoff_tokens:
             errors.append(
-                "Re-read the raw batch and resubmit with cleaned text matching the raw content more closely."
+                (
+                    "Cutoff position check failed: inferred cutoff lands at content token %d, "
+                    "but minimum allowed is %d (%.0f%% of raw content tokens=%d). "
+                    "This usually means the submission stops too early in the batch."
+                    % (
+                        alignment.cutoff_token_count,
+                        min_cutoff_tokens,
+                        _ALIGNMENT_MIN_CUTOFF_TOKEN_RATIO * 100,
+                        alignment.raw_token_count,
+                    )
+                )
             )
+
+        if errors:
             return self._finalize_submit(
-                errors, warnings, cutoff_line=None, confidence=None
+                errors,
+                warnings,
+                cutoff_line=cutoff_line,
+                confidence=confidence,
             )
 
         if cleaned_text and not cleaned_text.endswith("\n"):

@@ -26,7 +26,6 @@ dev = [
     "ruff-lsp>=0.0.62",
     "lsprotocol>=2023.0.0,<2024.0.0",
     "ty>=0.0.26",
-    "pyright>=1.1.408",
 ]
 
 [tool.pytest.ini_options]

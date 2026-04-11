@@ -15,9 +15,10 @@ class BatchContext:
     raw_start_line: int
     raw_end_line: int
     raw_line_count: int
+    raw_token_count: int
     prior_clean_tail: str
     memory_text: str
-    min_tokens: int
+    clean_token_target: int
 
 
 class StatePort(Protocol):
