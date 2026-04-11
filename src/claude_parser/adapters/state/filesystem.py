@@ -7,6 +7,7 @@ Version control (git) is handled internally.
 import json
 import logging
 import os
+import re
 import subprocess
 
 from claude_parser.application.run_engine import BatchPlan, RunEngine, RunSnapshot
@@ -20,6 +21,7 @@ from claude_parser.domain.node import Node, TreeDict
 from claude_parser.ports.state import BatchContext
 
 logger = logging.getLogger(__name__)
+_CLEAN_FILE_RE = re.compile(r"^clean_(\d+)\.md$")
 
 
 class FilesystemStateStore:
@@ -236,7 +238,8 @@ class FilesystemStateStore:
 
     def read_all_clean_before_cutoff(self) -> str:
         clean_files = sorted(
-            f for f in os.listdir(self._clean_dir) if f.endswith(".md")
+            (f for f in os.listdir(self._clean_dir) if f.endswith(".md")),
+            key=self._clean_file_sort_key,
         )
         parts: list[str] = []
         for clean_file in clean_files:
@@ -247,6 +250,12 @@ class FilesystemStateStore:
                         break
                     parts.append(line)
         return "".join(parts)
+
+    def _clean_file_sort_key(self, filename: str) -> tuple[int, int | str]:
+        match = _CLEAN_FILE_RE.match(filename)
+        if match:
+            return (0, int(match.group(1)))
+        return (1, filename)
 
     def _clean_path(self, ordinal: int) -> str:
         return os.path.join(self._clean_dir, f"clean_{ordinal}.md")
