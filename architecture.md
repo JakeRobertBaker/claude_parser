@@ -79,7 +79,7 @@ Loop per batch:
 After loop: state.read_all_clean_before_cutoff() -> state.write_final()
 ```
 
-## Filesystem Artifacts
+## File system Artifacts
 
 `FilesystemStateStore` keeps everything inside `state_dir/`:
 

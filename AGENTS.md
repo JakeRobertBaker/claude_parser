@@ -28,3 +28,7 @@
 - `BatchToolsService` owns tool semantics (`read_batch`, `submit_clean`, `commit_batch`); `adapters/mcp/server.py` should stay transport-only.
 - `annotation_schema.txt` is authoritative; `src/claude_parser/application/prompt_templates.py` contains the condensed runtime schema.
 - `application/` must not import from `adapters/`.
+
+## Deep Dive
+
+- For full execution flow and design rationale, see `architecture.md`.

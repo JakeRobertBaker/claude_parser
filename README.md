@@ -10,6 +10,7 @@ Parses raw markdown into a validated annotation tree using a batch MCP workflow.
 - `FilesystemStateStore` is persistence-focused (raw/clean/state/tree/log artifacts).
 - `BatchToolsService` owns tool semantics (`read_batch`, `submit_clean`, `commit_batch`) with explicit batch sessions.
 - Authoritative annotation schema lives in `annotation_schema.txt` (runtime condensed copy: `src/claude_parser/application/prompt_templates.py`).
+- Detailed architecture and end-to-end run flow: `architecture.md`.
 
 ## Commands
 
