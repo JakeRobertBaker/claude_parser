@@ -1,6 +1,6 @@
 """Prompt templates for the annotation-based parsing pipeline.
 
-The full annotation schema lives in `annotation_schema.txt` at the project
+The full annotation schema lives in `docs/annotation_schema.txt` at the project
 root. The template below embeds a condensed version Haiku needs at runtime.
 
 Templates use str.format() — literal braces must be doubled: {{ and }}.
