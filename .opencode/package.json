@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@jcodemunch/opencode-plugin": "file:../../../../opencode_stuff/jcodemunch_opencode_plugin",
+    "@opencode-ai/plugin": "1.4.3"
+  }
+}
