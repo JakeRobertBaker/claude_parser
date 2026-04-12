@@ -32,3 +32,14 @@
 ## Deep Dive
 
 - For full execution flow and design rationale, see `@docs/architecture.md`.
+
+Absolutely — here’s a version with similar terseness/style:
+
+## Code Exploration Policy
+
+Always use jCodeMunch MCP tools (`jcodemunch_*`) — never fall back to `read`, `grep`, `glob`, or `bash` for code exploration.
+
+- Before reading a file: use `jcodemunch_get_file_outline` or `jcodemunch_get_file_content`
+- Before searching: use `jcodemunch_search_symbols` or `jcodemunch_search_text`
+- Before exploring structure: use `jcodemunch_get_file_tree` or `jcodemunch_get_repo_outline`
+- Call `jcodemunch_resolve_repo` with the current directory first; if not indexed, call `jcodemunch_index_folder`.
