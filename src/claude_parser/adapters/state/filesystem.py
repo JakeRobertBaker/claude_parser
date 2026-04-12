@@ -4,21 +4,21 @@ Stores state.json, tree.json, raw/clean batch files, and logs on disk.
 Version control (git) is handled internally.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
 import re
 import subprocess
 
-from claude_parser.application.run_engine import BatchPlan, RunEngine, RunSnapshot
+from claude_parser.application.run_engine import RunSnapshot
 from claude_parser.application.serialization import tree_from_dict, tree_to_dict
-from claude_parser.application.tokens import approximate_claude_tokens
 from claude_parser.domain.annotation_tree_builder import (
     INTERNAL_ROOT_ID,
     ensure_internal_root,
 )
 from claude_parser.domain.node import Node, TreeDict
-from claude_parser.ports.state import BatchContext
 
 logger = logging.getLogger(__name__)
 _CLEAN_FILE_RE = re.compile(r"^clean_(\d+)\.md$")
@@ -32,21 +32,10 @@ class FilesystemStateStore:
         self._raw_path = raw_path
         self._resume = resume
 
-        # Internal progression state
-        self._engine = RunEngine(approximate_claude_tokens)
         self._snapshot: RunSnapshot = RunSnapshot()
         self._raw_lines: list[str] = []
         self._tree_dict: TreeDict = TreeDict()
         self._root: Node | None = None
-
-        # Current batch state (set by prepare_next, consumed by MCP server + service)
-        self._current_plan: BatchPlan | None = None
-        self._current_id: str = ""
-        self._current_ordinal: int = 0
-        self._current_prior_clean_tail: str = ""
-        self._current_memory_text: str = ""
-        self._current_min_tokens: int = 0
-        self._current_cutoff: int | None = None  # set by MCP server via set_cutoff
 
     # -- Directory paths --
 
@@ -96,6 +85,7 @@ class FilesystemStateStore:
             self._load_saved_state()
             self._load_saved_tree()
 
+        self._root = ensure_internal_root(self._tree_dict)
         logger.info("Initialized state directory: %s", self.state_dir)
 
     def _load_saved_state(self) -> None:
@@ -117,25 +107,19 @@ class FilesystemStateStore:
         self._tree_dict = tree_dict
         self._root = ensure_internal_root(self._tree_dict)
 
-    # -- Progression (StatePort) --
+    # -- Run state --
 
     @property
-    def complete(self) -> bool:
-        return self._engine.complete(self._snapshot, len(self._raw_lines))
+    def raw_lines(self) -> list[str]:
+        return self._raw_lines
 
     @property
-    def sections_completed(self) -> int:
-        return self._snapshot.sections_completed
+    def snapshot(self) -> RunSnapshot:
+        return self._snapshot
 
-    # -- Current batch properties (StatePort) --
-
-    @property
-    def current_id(self) -> str:
-        return self._current_id
-
-    @property
-    def current_ordinal(self) -> int:
-        return self._current_ordinal
+    def save_snapshot(self, snapshot: RunSnapshot) -> None:
+        self._snapshot = snapshot
+        self._save_state()
 
     @property
     def known_ids(self) -> list[str]:
@@ -149,90 +133,55 @@ class FilesystemStateStore:
     def tree_dict(self) -> TreeDict:
         return self._tree_dict
 
-    # -- Batch lifecycle --
+    def save_tree(self) -> None:
+        if self._tree_dict.root_node is None:
+            return
+        self._root = self._tree_dict.root_node
+        self._save_tree()
 
-    def prepare_next(self, batch_tokens: int, context_lines: int) -> None:
-        plan = self._engine.plan_next(
-            self._snapshot,
-            self._raw_lines,
-            batch_tokens,
-        )
+    # -- Context helpers --
 
-        self._current_plan = plan
-        self._current_id = plan.chunk_id
-        self._current_ordinal = plan.ordinal
+    def read_prior_clean_tail(self, ordinal: int, n_lines: int) -> str:
+        if ordinal == 0:
+            return ""
+        prev_path = self._clean_path(ordinal - 1)
+        if not os.path.exists(prev_path):
+            return ""
+        with open(prev_path, encoding="utf-8") as f:
+            lines = f.readlines()
+        cutoff_idx = len(lines)
+        for i, line in enumerate(lines):
+            if "<!-- cutoff -->" in line:
+                cutoff_idx = i
+                break
+        context_start = max(0, cutoff_idx - n_lines)
+        return "".join(lines[context_start:cutoff_idx])
 
-        path = os.path.join(self._raw_dir, f"raw_{plan.ordinal}.md")
+    def read_memory(self) -> str:
+        if not os.path.exists(self._memory_path):
+            return ""
+        with open(self._memory_path, encoding="utf-8") as f:
+            return f.read()
+
+    # -- Batch artifacts --
+
+    def write_raw_batch(self, ordinal: int, content: str) -> None:
+        path = os.path.join(self._raw_dir, f"raw_{ordinal}.md")
         with open(path, "w", encoding="utf-8") as f:
-            f.write(plan.raw_content)
+            f.write(content)
 
-        self._current_prior_clean_tail = self._get_prior_clean_tail(
-            plan.ordinal, context_lines
-        )
-        self._current_memory_text = self._read_memory()
-        self._current_min_tokens = plan.clean_token_target
-        self._current_cutoff = None
+    def clean_batch_exists(self, ordinal: int) -> bool:
+        return os.path.exists(self._clean_path(ordinal))
 
-        logger.info(
-            "[%s] Processing raw lines %d–%d",
-            plan.chunk_id,
-            plan.start_line + 1,
-            plan.end_line,
-        )
-
-    def get_batch_context(self) -> BatchContext:
-        if self._current_plan is None:
-            raise RuntimeError(
-                "prepare_next must be called before accessing batch context."
-            )
-        plan = self._current_plan
-        return BatchContext(
-            raw_content=plan.raw_content,
-            raw_start_line=plan.start_line,
-            raw_end_line=plan.end_line,
-            raw_line_count=plan.raw_line_count,
-            raw_token_count=plan.raw_token_count,
-            prior_clean_tail=self._current_prior_clean_tail,
-            memory_text=self._current_memory_text,
-            clean_token_target=self._current_min_tokens,
-        )
-
-    def set_cutoff(self, source_line: int) -> None:
-        if self._current_plan is None:
-            raise RuntimeError("Cannot set cutoff without an active batch plan.")
-        self._current_cutoff = self._engine.clamp_cutoff(
-            self._current_plan, source_line
-        )
-
-    def advance(self) -> None:
-        assert self._current_cutoff is not None, (
-            "set_cutoff must be called before advance"
-        )
-
-        self._snapshot = self._engine.advance(self._snapshot, self._current_cutoff)
-        self._current_plan = None
-        if self._tree_dict.root_node is not None:
-            self._root = self._tree_dict.root_node
-
-        self._save_state()
-        if self._root is not None:
-            self._save_tree()
-        self.commit_all(self._current_id)
-
-    # -- Clean batches (current batch) --
-
-    def clean_batch_exists(self) -> bool:
-        return os.path.exists(self._clean_path(self._current_ordinal))
-
-    def read_clean_batch(self) -> str | None:
-        path = self._clean_path(self._current_ordinal)
+    def read_clean_batch(self, ordinal: int) -> str | None:
+        path = self._clean_path(ordinal)
         if not os.path.exists(path):
             return None
         with open(path, encoding="utf-8") as f:
             return f.read()
 
-    def write_clean_batch(self, content: str) -> None:
-        path = self._clean_path(self._current_ordinal)
+    def write_clean_batch(self, ordinal: int, content: str) -> None:
+        path = self._clean_path(ordinal)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
@@ -260,43 +209,17 @@ class FilesystemStateStore:
     def _clean_path(self, ordinal: int) -> str:
         return os.path.join(self._clean_dir, f"clean_{ordinal}.md")
 
-    # -- Logging (uses current_id) --
+    # -- Logging --
 
-    def write_log(self, content: str) -> None:
-        path = os.path.join(self._logs_dir, f"{self._current_id}.json")
+    def write_log(self, chunk_id: str, content: str) -> None:
+        path = os.path.join(self._logs_dir, f"{chunk_id}.json")
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
-    def write_failure(self, content: str) -> None:
-        path = os.path.join(self._failures_dir, f"{self._current_id}_raw_response.txt")
+    def write_failure(self, chunk_id: str, content: str) -> None:
+        path = os.path.join(self._failures_dir, f"{chunk_id}_raw_response.txt")
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
-
-    # -- Context (internal) --
-
-    def _get_prior_clean_tail(self, ordinal: int, n_lines: int) -> str:
-        if ordinal == 0:
-            return ""
-        prev_path = self._clean_path(ordinal - 1)
-        if not os.path.exists(prev_path):
-            return ""
-        with open(prev_path, encoding="utf-8") as f:
-            lines = f.readlines()
-        cutoff_idx = len(lines)
-        for i, line in enumerate(lines):
-            if "<!-- cutoff -->" in line:
-                cutoff_idx = i
-                break
-        context_start = max(0, cutoff_idx - n_lines)
-        return "".join(lines[context_start:cutoff_idx])
-
-    # -- Memory (internal) --
-
-    def _read_memory(self) -> str:
-        if not os.path.exists(self._memory_path):
-            return ""
-        with open(self._memory_path, encoding="utf-8") as f:
-            return f.read()
 
     # -- State persistence (internal) --
 

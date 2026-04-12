@@ -1,4 +1,4 @@
-"""Shared run progression logic used by state stores."""
+"""Shared run progression logic used by application services/adapters."""
 
 from __future__ import annotations
 
@@ -28,62 +28,59 @@ class BatchPlan:
     clean_token_target: int
 
 
-class RunEngine:
-    """Pure state machine for batch planning and advancement."""
+def complete(snapshot: RunSnapshot, total_raw_lines: int) -> bool:
+    return snapshot.next_start_line >= total_raw_lines
 
-    def __init__(self, token_counter: TokenCounter):
-        self._token_counter = token_counter
 
-    def complete(self, snapshot: RunSnapshot, total_raw_lines: int) -> bool:
-        return snapshot.next_start_line >= total_raw_lines
+def plan_next(
+    snapshot: RunSnapshot,
+    raw_lines: Sequence[str],
+    batch_tokens: int,
+    token_counter: TokenCounter,
+) -> BatchPlan:
+    start = snapshot.next_start_line
+    if start >= len(raw_lines):
+        raise RuntimeError("No raw content left to plan a batch.")
 
-    def plan_next(
-        self,
-        snapshot: RunSnapshot,
-        raw_lines: Sequence[str],
-        batch_tokens: int,
-    ) -> BatchPlan:
-        start = snapshot.next_start_line
-        if start >= len(raw_lines):
-            raise RuntimeError("No raw content left to plan a batch.")
+    end = start
+    tokens = 0
+    while end < len(raw_lines):
+        tokens += token_counter(raw_lines[end])
+        end += 1
+        if tokens >= batch_tokens:
+            break
 
-        end = start
-        tokens = 0
-        while end < len(raw_lines):
-            tokens += self._token_counter(raw_lines[end])
-            end += 1
-            if tokens >= batch_tokens:
-                break
+    raw_content = "".join(raw_lines[start:end])
+    raw_line_count = end - start
+    raw_tokens = token_counter(raw_content)
+    clean_token_target = max(1, int(raw_tokens * 0.5))
 
-        raw_content = "".join(raw_lines[start:end])
-        raw_line_count = end - start
-        raw_tokens = self._token_counter(raw_content)
-        clean_token_target = max(1, int(raw_tokens * 0.5))
+    ordinal = snapshot.next_chunk_id
+    chunk_id = f"chunk_{ordinal:03d}"
 
-        ordinal = snapshot.next_chunk_id
-        chunk_id = f"chunk_{ordinal:03d}"
+    return BatchPlan(
+        ordinal=ordinal,
+        chunk_id=chunk_id,
+        start_line=start,
+        end_line=end,
+        raw_content=raw_content,
+        raw_line_count=raw_line_count,
+        raw_token_count=raw_tokens,
+        clean_token_target=clean_token_target,
+    )
 
-        return BatchPlan(
-            ordinal=ordinal,
-            chunk_id=chunk_id,
-            start_line=start,
-            end_line=end,
-            raw_content=raw_content,
-            raw_line_count=raw_line_count,
-            raw_token_count=raw_tokens,
-            clean_token_target=clean_token_target,
-        )
 
-    def clamp_cutoff(self, plan: BatchPlan, source_line: int) -> int:
-        lower = plan.start_line + 1
-        upper = plan.end_line
-        if upper <= lower:
-            upper = lower
-        return max(lower, min(source_line, upper))
+def clamp_cutoff(plan: BatchPlan, source_line: int) -> int:
+    lower = plan.start_line + 1
+    upper = plan.end_line
+    if upper <= lower:
+        upper = lower
+    return max(lower, min(source_line, upper))
 
-    def advance(self, snapshot: RunSnapshot, cutoff_line: int) -> RunSnapshot:
-        return RunSnapshot(
-            next_start_line=cutoff_line,
-            next_chunk_id=snapshot.next_chunk_id + 1,
-            sections_completed=snapshot.sections_completed + 1,
-        )
+
+def advance(snapshot: RunSnapshot, cutoff_line: int) -> RunSnapshot:
+    return RunSnapshot(
+        next_start_line=cutoff_line,
+        next_chunk_id=snapshot.next_chunk_id + 1,
+        sections_completed=snapshot.sections_completed + 1,
+    )

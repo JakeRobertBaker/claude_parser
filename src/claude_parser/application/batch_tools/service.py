@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from typing import Any
 
 from claude_parser.application.batch_tools.cutoff_alignment import infer_cutoff_line
@@ -22,7 +22,7 @@ from claude_parser.domain.annotation_tree_builder import (
 )
 from claude_parser.domain.node import TreeDict
 from claude_parser.domain.validator import validate_annotations
-from claude_parser.ports.state import StatePort
+from claude_parser.ports.state import BatchContext, StatePort
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +36,38 @@ class BatchToolsService:
 
     def __init__(self, state: StatePort):
         self._state = state
+        self._context: BatchContext | None = None
+        self._known_ids: list[str] = []
+        self._tree_dict: TreeDict = TreeDict()
+        self._current_ordinal: int = 0
+        self.prepare_batch()
+
+    def begin_batch(
+        self,
+        context: BatchContext,
+        known_ids: list[str],
+        tree_dict: TreeDict,
+        current_ordinal: int,
+    ) -> None:
+        self._context = context
+        self._known_ids = list(known_ids)
+        self._tree_dict = tree_dict
+        self._current_ordinal = current_ordinal
         self.prepare_batch()
 
     def prepare_batch(self) -> None:
         self._submitted = False
         self._last_submit_valid = False
         self._inferred_cutoff_line: int | None = None
+        self._committed_source_line: int | None = None
 
     def succeeded(self) -> bool:
         return self._submitted
 
-    def tool_specs(self) -> list[ToolSpec]:
+    def committed_source_line(self) -> int | None:
+        return self._committed_source_line
+
+    def tool_specs(self) -> list[dict[str, Any]]:
         return _TOOL_SPECS
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -69,18 +90,18 @@ class BatchToolsService:
         raise ValueError(f"Unknown tool: {name}")
 
     def build_read_batch_payload(self) -> ReadBatchPayload:
-        context = self._state.get_batch_context()
+        context = self._require_context()
         return ReadBatchPayload(
             raw_content=context.raw_content,
             batch_line_count=context.raw_line_count,
-            current_tree=tree_preview(self._state.tree_dict),
+            current_tree=tree_preview(self._tree_dict),
             prior_clean_tail=context.prior_clean_tail,
-            known_ids=self._state.known_ids,
+            known_ids=self._known_ids,
             memory_text=context.memory_text,
         )
 
     def handle_submit_clean(self, cleaned_text: str) -> SubmitCleanResult:
-        context = self._state.get_batch_context()
+        context = self._require_context()
         errors: list[str] = []
         warnings: list[str] = []
 
@@ -102,9 +123,9 @@ class BatchToolsService:
         events = parse_annotations(cleaned_text)
         validation = validate_annotations(
             events,
-            known_ids=set(self._state.known_ids),
+            known_ids=set(self._known_ids),
             cleaned_text=cleaned_text,
-            has_existing_nodes=has_visible_nodes(self._state.tree_dict),
+            has_existing_nodes=has_visible_nodes(self._tree_dict),
         )
         errors.extend(validation.errors)
         warnings.extend(validation.warnings)
@@ -194,7 +215,7 @@ class BatchToolsService:
             cleaned_text += "\n"
 
         full_content = cleaned_text + "<!-- cutoff -->\n"
-        self._state.write_clean_batch(full_content)
+        self._state.write_clean_batch(self._current_ordinal, full_content)
         self._inferred_cutoff_line = cutoff_line
 
         raw_context = raw_lines[
@@ -203,7 +224,7 @@ class BatchToolsService:
         cleaned_lines = cleaned_text.splitlines()
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
 
-        proposed_tree = tree_preview(self._state.tree_dict)
+        proposed_tree = tree_preview(self._tree_dict)
         if not errors:
             try:
                 proposed_tree = self._build_proposed_tree_preview(events, cleaned_text)
@@ -257,55 +278,51 @@ class BatchToolsService:
                 ),
             )
 
-        context = self._state.get_batch_context()
-        source_line = context.raw_start_line + cutoff_batch_line
-        self._state.set_cutoff(source_line)
+        context = self._require_context()
+        self._committed_source_line = context.raw_start_line + cutoff_batch_line
         self._submitted = True
         return CommitResult(success=True)
+
+    def _require_context(self) -> BatchContext:
+        if self._context is None:
+            raise ValueError("No active batch. begin_batch() must be called first.")
+        return self._context
 
     def _build_proposed_tree_preview(
         self, events: list[AnnotationEvent], cleaned_text: str
     ) -> str:
         tree_dict_copy = TreeDict()
-        if self._state.tree_dict.root_node is not None:
-            snapshot = tree_to_dict(self._state.tree_dict.root_node)
+        if self._tree_dict.root_node is not None:
+            snapshot = tree_to_dict(self._tree_dict.root_node)
             _, tree_dict_copy = tree_from_dict(snapshot)
 
         cleaned_line_count = len(cleaned_text.splitlines())
         process_batch_annotations(
             events,
             tree_dict_copy,
-            self._state.current_ordinal,
+            self._current_ordinal,
             cleaned_line_count,
         )
         return tree_preview(tree_dict_copy)
 
 
-@dataclass(frozen=True)
-class ToolSpec:
-    name: str
-    description: str
-    input_schema: dict[str, Any]
-    meta: dict[str, Any] | None = None
-
-
-_TOOL_SPECS: list[ToolSpec] = [
-    ToolSpec(
-        name="read_batch",
-        description=(
+_TOOL_SPECS: list[dict[str, Any]] = [
+    {
+        "name": "read_batch",
+        "description": (
             "Read current raw batch and context. Returns raw_content, batch_line_count, "
             "current_tree, prior_clean_tail, known_ids, memory_text."
         ),
-        input_schema={"type": "object", "properties": {}},
-        meta={"anthropic/maxResultSizeChars": 500000},
-    ),
-    ToolSpec(
-        name="submit_clean",
-        description=(
+        "input_schema": {"type": "object", "properties": {}},
+        "meta": {"anthropic/maxResultSizeChars": 500000},
+    },
+    {
+        "name": "submit_clean",
+        "description": (
             "Submit cleaned markdown with annotations. Returns validation info, inferred cutoff, "
             "raw context, clean tail, and proposed_tree."
         ),
-        input_schema={
+        "input_schema": {
             "type": "object",
             "properties": {
                 "cleaned_text": {
@@ -317,13 +334,13 @@ _TOOL_SPECS: list[ToolSpec] = [
             },
             "required": ["cleaned_text"],
         },
-    ),
-    ToolSpec(
-        name="commit_batch",
-        description=(
+    },
+    {
+        "name": "commit_batch",
+        "description": (
             "Finalize this batch. Call after submit_clean succeeds. Optional cutoff_batch_line overrides the inferred cutoff."
         ),
-        input_schema={
+        "input_schema": {
             "type": "object",
             "properties": {
                 "cutoff_batch_line": {
@@ -332,5 +349,5 @@ _TOOL_SPECS: list[ToolSpec] = [
                 }
             },
         },
-    ),
+    },
 ]
