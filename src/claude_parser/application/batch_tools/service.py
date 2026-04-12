@@ -338,7 +338,7 @@ _TOOL_SPECS: list[dict[str, Any]] = [
     {
         "name": "commit_batch",
         "description": (
-            "Finalize this batch. Call after submit_clean succeeds. Optional cutoff_batch_line overrides the inferred cutoff."
+            "Finalize this batch. Call after submit_clean succeeds. Optional cutoff_batch_line may override the inferred cutoff when intentionally provided."
         ),
         "input_schema": {
             "type": "object",
