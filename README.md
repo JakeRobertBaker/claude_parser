@@ -9,12 +9,13 @@ Parses raw markdown into a validated annotation tree using a batch MCP workflow.
 - `run_engine.py` exposes pure planning/advancement functions.
 - `FilesystemStateStore` is persistence-focused (raw/clean/state/tree/log artifacts).
 - `BatchToolsService` owns tool semantics (`read_batch`, `submit_clean`, `commit_batch`) with explicit batch sessions.
+- Authoritative annotation schema lives in `annotation_schema.txt` (runtime condensed copy: `src/claude_parser/application/prompt_templates.py`).
 
 ## Commands
 
 ```bash
 # Unit Tests
-uv run pytest tests/
+uv run python -m pytest tests/
 
 # Ruff - linting
 uv run ruff check src/ tests/
