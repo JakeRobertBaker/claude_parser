@@ -1,12 +1,17 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@jcodemunch/opencode-plugin"],
+  "plugin": [
+    "file://{env:HOME}/opencode-starter-kit/packages/plugins/jcodemunch-opencode-plugin/index.js"
+  ],
   "mcp": {
     "jcodemunch": {
       "type": "local",
       "command": ["uvx", "jcodemunch-mcp"]
     }
   },
+  "instructions": [
+    "{env:HOME}/opencode-starter-kit/instructions/jcodemunch-opencode-policy.md"
+  ],
   "lsp": {
     "ruff": {
       "command": ["uv", "run", "ruff-lsp"],

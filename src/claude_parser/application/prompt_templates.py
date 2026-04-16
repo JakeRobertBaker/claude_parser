@@ -34,7 +34,7 @@ Use one header line per node:
 Rules:
 - Depth (`-`, `--`, `---`, ...) defines nesting.
 - `id` is required and globally unique. Never reuse `known_ids`.
-- `title` is optional; include only when useful.
+- `title` is optional; include only when title (header, subheader, single bold text line, etc...) text is in the source.
 - `type` is optional and only for semantic units: definition, theorem, lemma, proposition, corollary, proof, remark, example, exercise, axiom.
 - Containers (book/chapter/section/subsection) have no `type`.
 - Proofs are separate nodes with `type="proof"` and `proves="<id>"`.
