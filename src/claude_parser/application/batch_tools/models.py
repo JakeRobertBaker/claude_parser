@@ -25,7 +25,7 @@ class ReadBatchPayload:
     raw_content: str
     batch_line_count: int
     raw_token_count: int
-    current_tree: str
+    tree_context: dict[str, Any]
     prior_clean_context: str
     next_raw_context: str
     next_raw_context_line_count: int
@@ -46,7 +46,8 @@ class SubmitCleanResult:
     match_confidence: float | None = None
     raw_context_around_cutoff: list[str] = field(default_factory=list)
     clean_tail: list[str] = field(default_factory=list)
-    proposed_tree: str = ""
+    proposed_tree: dict[str, Any] = field(default_factory=dict)
+    math_validation: dict[str, Any] = field(default_factory=dict)
     batch_line_count: int | None = None
     rollback_lines: int = 0
     next_raw_context_violation: bool = False
@@ -60,6 +61,18 @@ class CommitResult:
 
     success: bool
     error: str | None = None
+
+
+@dataclass(slots=True)
+class AdjustDepthsResult:
+    """Result of transactionally changing current-batch annotation depths."""
+
+    valid: bool
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    applied_edits: list[dict[str, int | str]] = field(default_factory=list)
+    proposed_tree: dict[str, Any] = field(default_factory=dict)
+    math_validation: dict[str, Any] = field(default_factory=dict)
 
 
 JSONLike = dict[str, Any]

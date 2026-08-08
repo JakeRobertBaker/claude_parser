@@ -7,6 +7,7 @@ from claude_parser.application.tokens import approximate_claude_tokens
 from claude_parser.domain.annotation_parser import parse_annotations
 from claude_parser.domain.annotation_tree_builder import process_batch_annotations
 from claude_parser.domain.node import TreeDict
+from claude_parser.ports.math_validation import MathValidationResult
 from claude_parser.ports.state import BatchContext, StatePort
 
 
@@ -30,6 +31,18 @@ class _FakeState:
 
     def set_cutoff(self, source_line: int) -> None:
         _ = source_line
+
+
+class _PassthroughMathValidator:
+    def validate(self, markdown: str) -> MathValidationResult:
+        return MathValidationResult(normalized_text=markdown)
+
+
+def _make_service(state: _FakeState) -> BatchToolsService:
+    return BatchToolsService(
+        cast(StatePort, state),
+        _PassthroughMathValidator(),
+    )
 
 
 def _build_context(
@@ -61,7 +74,7 @@ def test_submit_clean_allows_tiny_final_batches() -> None:
     raw_content = "\nAMS on the Web www.ams.org\n"
     context = _build_context(raw_content, clean_token_target=1)
     state = _FakeState()
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     result = service.handle_submit_clean(
@@ -71,6 +84,8 @@ def test_submit_clean_allows_tiny_final_batches() -> None:
 
     assert result.valid is True
     assert result.errors == []
+    assert state.written_clean is None
+    assert service.handle_commit_batch().success is True
     assert state.written_clean is not None
     assert state.written_clean.endswith("<!-- cutoff -->\n")
 
@@ -80,7 +95,7 @@ def test_submit_clean_reports_confidence_and_cutoff_violations_separately() -> N
     raw_content = line * 30
     context = _build_context(raw_content, clean_token_target=1)
     state = _FakeState()
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     first_twenty_tokens = "\n".join([line, line])
@@ -113,7 +128,7 @@ def test_submit_clean_validates_and_persists_explicit_continuation() -> None:
         next_raw_context="The second clause continues here.\n",
     )
     state = _FakeState()
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     cleaned_text = (
@@ -136,7 +151,7 @@ def test_submit_clean_rejects_continuation_that_is_not_active_leaf() -> None:
     raw_content = "Definition alpha has two clauses.\n"
     context = _build_context(raw_content)
     state = _FakeState()
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     result = service.handle_submit_clean(
@@ -166,7 +181,7 @@ def test_read_batch_returns_structured_prior_continuation_only_when_declared() -
         "Definition alpha finishes.\n",
         prior_continuation_node_id="def_alpha",
     )
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=1)
 
     payload = service.build_read_batch_payload()
@@ -198,7 +213,7 @@ def test_submit_clean_allows_persisted_prior_continuation() -> None:
         next_raw_context="The same definition continues again.\n",
         prior_continuation_node_id="def_alpha",
     )
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=1)
 
     result = service.handle_submit_clean(
@@ -226,7 +241,7 @@ def test_submit_clean_rejects_text_copied_from_next_raw_context() -> None:
         next_raw_context=next_raw_context,
     )
     state = _FakeState()
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     result = service.handle_submit_clean(
@@ -251,7 +266,7 @@ def test_submit_clean_allows_core_without_copying_next_raw_context() -> None:
         next_raw_context="Following material belongs to the next batch only.\n",
     )
     state = _FakeState()
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     result = service.handle_submit_clean(
@@ -282,7 +297,7 @@ def test_submit_clean_requires_rollback_before_trailing_semantic_unit() -> None:
         ),
     )
     state = _FakeState()
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     rejected = service.handle_submit_clean(
@@ -321,7 +336,7 @@ def test_submit_clean_rejects_late_new_continuation() -> None:
         next_raw_context="The definition beta finishes in the following batch.\n",
     )
     state = _FakeState()
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     cleaned_text = (
@@ -348,7 +363,7 @@ def test_submit_clean_rejects_continuation_at_source_eof() -> None:
     )
     context = _build_context(raw_content)
     state = _FakeState()
-    service = BatchToolsService(cast(StatePort, state))
+    service = _make_service(state)
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     result = service.handle_submit_clean(
@@ -359,3 +374,88 @@ def test_submit_clean_rejects_continuation_at_source_eof() -> None:
 
     assert result.valid is False
     assert any("source EOF" in error for error in result.errors)
+
+
+def test_tree_context_exposes_active_trace_and_explicit_sibling_omissions() -> None:
+    state = _FakeState()
+    annotations = ['@ - id="book"\nBook\n']
+    for index in range(7):
+        annotations.append(f'@ -- id="sec_{index}"\nSection {index}\n')
+    text = "".join(annotations)
+    process_batch_annotations(
+        parse_annotations(text),
+        state.tree_dict,
+        chunk_number=0,
+        total_content_lines=len(text.splitlines()),
+    )
+    service = _make_service(state)
+    service.begin_batch(
+        _build_context("Next section.\n"),
+        state.known_ids,
+        state.tree_dict,
+        current_ordinal=1,
+    )
+
+    context = service.build_read_batch_payload().tree_context
+
+    assert [node["id"] for node in context["active_trace"]] == ["book", "sec_6"]
+    book_children = context["append_neighborhoods"][-1]
+    assert book_children["total_children"] == 7
+    assert book_children["omitted_before"] == 2
+    assert [node["id"] for node in book_children["children"]] == [
+        "sec_2",
+        "sec_3",
+        "sec_4",
+        "sec_5",
+        "sec_6",
+    ]
+
+
+def test_adjust_depths_previews_and_persists_only_reviewed_candidate() -> None:
+    raw_content = (
+        "Book title.\n"
+        "Section C introduction.\n"
+        "Interior subsection.\n"
+        "Section D introduction.\n"
+    )
+    cleaned_text = (
+        '@ - id="book"\nBook title.\n'
+        '@ -- id="sec_c"\nSection C introduction.\n'
+        '@ --- id="sec_c_interior"\nInterior subsection.\n'
+        '@ --- id="sec_d"\nSection D introduction.\n'
+    )
+    state = _FakeState()
+    service = _make_service(state)
+    service.begin_batch(
+        _build_context(raw_content),
+        state.known_ids,
+        state.tree_dict,
+        current_ordinal=0,
+    )
+
+    submitted = service.handle_submit_clean(
+        cleaned_text, cutoff_kind="clean_boundary"
+    )
+
+    assert submitted.valid
+    submitted_nodes = {
+        item["id"]: item for item in submitted.proposed_tree["batch_nodes"]
+    }
+    assert submitted_nodes["sec_d"]["parent_id"] == "sec_c"
+    assert state.written_clean is None
+
+    failed = service.handle_adjust_depths([{"node_id": "older_node", "depth": 2}])
+    assert not failed.valid
+    assert not service.handle_commit_batch().success
+
+    adjusted = service.handle_adjust_depths([{"node_id": "sec_d", "depth": 2}])
+
+    assert adjusted.valid
+    adjusted_nodes = {
+        item["id"]: item for item in adjusted.proposed_tree["batch_nodes"]
+    }
+    assert adjusted_nodes["sec_d"]["parent_id"] == "book"
+    assert service.handle_commit_batch().success
+    assert state.written_clean is not None
+    assert '@ -- id="sec_d"' in state.written_clean
+    assert '@ --- id="sec_d"' not in state.written_clean

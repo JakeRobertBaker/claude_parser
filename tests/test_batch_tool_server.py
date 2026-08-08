@@ -7,7 +7,13 @@ from urllib.request import Request, urlopen
 from claude_parser.adapters.mcp.server import BatchMCPServer
 from claude_parser.adapters.state.filesystem import FilesystemStateStore
 from claude_parser.application.tokens import approximate_claude_tokens
+from claude_parser.ports.math_validation import MathValidationResult
 from claude_parser.ports.state import BatchContext
+
+
+class _PassthroughMathValidator:
+    def validate(self, markdown: str) -> MathValidationResult:
+        return MathValidationResult(normalized_text=markdown)
 
 
 def test_json_transport_lists_and_calls_batch_tools(tmp_path: Path) -> None:
@@ -18,7 +24,7 @@ def test_json_transport_lists_and_calls_batch_tools(tmp_path: Path) -> None:
     state = FilesystemStateStore(str(state_dir), str(raw_path))
     state.init()
 
-    server = BatchMCPServer(state, str(state_dir))
+    server = BatchMCPServer(state, str(state_dir), _PassthroughMathValidator())
     server.start()
     try:
         context = BatchContext(
@@ -43,7 +49,9 @@ def test_json_transport_lists_and_calls_batch_tools(tmp_path: Path) -> None:
             specs = json.load(response)
         assert {spec["name"] for spec in specs} == {
             "read_batch",
+            "inspect_tree",
             "submit_clean",
+            "adjust_depths",
             "commit_batch",
         }
 

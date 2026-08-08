@@ -1,4 +1,4 @@
-"""MCP SSE server exposing read_batch/submit_clean/commit_batch tools."""
+"""Transport exposing the application-owned batch tools."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from starlette.routing import Mount, Route
 from claude_parser.application.batch_tools import BatchToolsService
 from claude_parser.domain.node import TreeDict
 from claude_parser.ports.batch_tools import BatchToolsPort
+from claude_parser.ports.math_validation import MathValidationPort
 from claude_parser.ports.state import BatchContext, StatePort
 
 logger = logging.getLogger(__name__)
@@ -35,9 +36,14 @@ def _find_free_port() -> int:
 class BatchMCPServer(BatchToolsPort):
     """Adapter that backs the BatchToolsPort via MCP SSE server."""
 
-    def __init__(self, state: StatePort, state_dir: str):
+    def __init__(
+        self,
+        state: StatePort,
+        state_dir: str,
+        math_validator: MathValidationPort,
+    ):
         self._state_dir = os.path.abspath(state_dir)
-        self._service = BatchToolsService(state)
+        self._service = BatchToolsService(state, math_validator)
         self._port: int | None = None
         self._thread: threading.Thread | None = None
         self._uvicorn_server: Any = None

@@ -105,3 +105,33 @@ Proof text"""
         )
         assert result.valid
         assert result.warnings == []
+
+
+class TestImmediateContainerHierarchy:
+    def test_rejects_typed_sibling_after_empty_container(self):
+        text = (
+            '@ - id="book"\n'
+            '@ -- id="subsection"\n'
+            '@ -- id="def_1" type="definition"\n'
+            "Definition content.\n"
+        )
+
+        result = validate_annotations(parse_annotations(text), cleaned_text=text)
+
+        assert any(
+            "immediately preceding empty container" in error
+            for error in result.errors
+        )
+
+    def test_allows_typed_sibling_when_container_has_content(self):
+        text = (
+            '@ - id="book"\n'
+            '@ -- id="section"\n'
+            "Section introduction.\n"
+            '@ -- id="def_1" type="definition"\n'
+            "Definition content.\n"
+        )
+
+        result = validate_annotations(parse_annotations(text), cleaned_text=text)
+
+        assert result.errors == []

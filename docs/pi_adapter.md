@@ -4,15 +4,17 @@
 
 The Pi integration uses Pi's JavaScript SDK as the agent loop and OpenRouter/model
 integration layer. It does not give Pi general coding tools. A fresh persistent Pi
-session is created for every batch with exactly three custom tools:
+session is created for every batch with exactly five custom tools:
 
 1. `read_batch`
-2. `submit_clean`
-3. `commit_batch`
+2. `inspect_tree`
+3. `submit_clean`
+4. `adjust_depths`
+5. `commit_batch`
 
 The existing Python `BatchToolsService` remains authoritative for payload assembly,
-annotation validation, cutoff alignment, clean-file persistence, proposed-tree
-construction, and commit state. The Pi runner fetches tool specifications from a
+annotation and KaTeX validation, cutoff alignment, pending clean state,
+proposed-tree construction, depth edits, persistence, and commit state. The Pi runner fetches tool specifications from a
 localhost-only JSON transport and delegates every tool execution back to that
 service.
 
@@ -86,15 +88,17 @@ message behavior. The current design deliberately buys Pi's mature policies firs
 ## Capability restrictions
 
 The runner supplies a custom resource loader with no extensions, skills, prompt
-templates, themes, or `AGENTS.md` context. Its tool allowlist contains only the three
+templates, themes, or `AGENTS.md` context. Its tool allowlist contains only the five
 batch tools, so Pi's `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` tools
 are absent.
 
 The runner adds two workflow guards beyond the Python validation:
 
-- `submit_clean` and `commit_batch` cannot run before `read_batch`.
+- tree inspection, submission, depth adjustment, and commit cannot run before `read_batch`.
 - `read_batch` returns the large batch payload only once per agent session.
-- `commit_batch` cannot run before a valid submission and cannot override the
+- `adjust_depths` operates only on a valid pending submission and can change only
+  current-batch annotation hyphens.
+- `commit_batch` cannot run before the latest proposal is valid and cannot override the
   service-inferred cutoff.
 
 If the model stops before committing, the runner gives it at most two targeted
@@ -154,3 +158,17 @@ the next batch. New continuations are permitted only for an oversized unit opene
 at the start of a batch; a later unit crossing the boundary must be rolled back.
 Prior clean prose is supplied as read-only `prior_clean_context`, a whole-line
 suffix bounded by `--prior-clean-context-tokens` (default 2000).
+
+## Math and tree review
+
+Every submission is parsed with KaTeX, regardless of the selected agent adapter.
+Math inside code spans and fences is ignored. Doubled alphabetic escapes such as
+`\\mathbf` are normalized to `\mathbf` and reported by location; unclosed math
+delimiters and remaining KaTeX parse failures reject the submission.
+
+`read_batch.tree_context` provides the major generic-container outline, complete
+active trace, and local sibling windows with explicit omission counts. An agent can
+page through an older branch using `inspect_tree`. A valid `submit_clean` returns
+every node created by that batch with its annotation depth and resolved parent.
+The candidate remains in memory: `adjust_depths` can transactionally repair its
+current-batch hierarchy, and only `commit_batch` writes the reviewed clean file.

@@ -13,11 +13,11 @@ Adapters     — concrete implementations of ports (CLI, files, MCP transport, e
 ```
 
 - **Domain** (`src/claude_parser/domain/`): annotation parsing, tree building, node rules.
-- **Ports** (`src/claude_parser/ports/`): `LLMPort`, `StatePort`, `BatchToolsPort`.
+- **Ports** (`src/claude_parser/ports/`): `LLMPort`, `StatePort`, `BatchToolsPort`, `MathValidationPort`.
 - **Application** (`src/claude_parser/application/`):
   - `run_engine.py` contains pure run-flow functions (`plan_next`, `clamp_cutoff`, `advance`) and run dataclasses.
   - `parsing/service.py` owns the full run loop orchestration.
-  - `batch_tools/` hosts `BatchToolsService` + alignment/tree preview helpers.
+  - `batch_tools/` hosts `BatchToolsService` plus alignment and structured tree-view helpers.
   - `serialization.py`, `prompt_builder.py`, and prompt templates are shared policies.
 - **Adapters** (`src/claude_parser/adapters/`): concrete infrastructure, including
   interchangeable Claude CLI and Pi SDK agent adapters.
@@ -47,8 +47,8 @@ cli -> adapters -> application -> ports -> domain
 `BatchToolsService` is explicit-session based:
 
 - `begin_batch(context, known_ids, tree_dict, current_ordinal)`
-- MCP tools: `read_batch`, `submit_clean`, `commit_batch`
-- `commit_batch` records committed source line for the caller
+- tools cover batch reading, tree inspection, submission, depth adjustment, and commit
+- a valid submission remains pending until `commit_batch` persists it and records its source line
 
 `ParsingService` reads `batch_tools.committed_source_line()` and persists progression.
 
@@ -73,7 +73,7 @@ Loop per batch:
 2. state writes `raw_content` and `next_raw_context` as separate artifacts
 3. ParsingService builds BatchContext from plan + state helpers
 4. batch_tools.begin_batch(...)
-5. Selected agent adapter calls read_batch/submit_clean/commit_batch
+5. Selected agent adapter reads, submits, reviews resolved parents, optionally edits depths, and commits
 6. ParsingService reads clean file, parses + validates annotations
 7. process_batch_annotations(...) mutates tree
 8. ParsingService clamps cutoff, advances snapshot, calls state.save_snapshot/state.save_tree/state.commit_all
@@ -96,15 +96,28 @@ After loop: state.read_all_clean_before_cutoff() -> state.write_final()
 
 ## MCP Contract
 
-`BatchToolsService` defines three tools:
+`BatchToolsService` defines five tools:
 
 1. `read_batch()`
-2. `submit_clean(cleaned_text, cutoff_kind, continuation_node_id?)`
-3. `commit_batch()`
+2. `inspect_tree(node_id, child_offset?, child_limit?)`
+3. `submit_clean(cleaned_text, cutoff_kind, continuation_node_id?)`
+4. `adjust_depths(edits)`
+5. `commit_batch()`
 
 The MCP SSE transport returns JSON payloads in MCP `TextContent`. The Pi transport
 returns the same payload dictionaries as JSON over localhost HTTP; Pi wraps them as
 native custom-tool results.
+
+`read_batch.tree_context` is topology-aware: it includes the major container
+outline, complete active trace, and bounded sibling neighborhoods whose omissions
+are explicit. Submission returns every current-batch node with its resolved parent.
+Depth edits are transactional and limited to the annotation hyphens of those nodes.
+No clean artifact is written until the agent commits the reviewed proposal.
+
+The application depends on `MathValidationPort`; the composition root injects the
+Node/KaTeX adapter. It extracts supported Markdown math delimiters outside code,
+repairs doubled alphabetic command escapes, and makes remaining KaTeX parse errors
+blocking for both Claude and Pi runs.
 
 `batch_tokens` defines the committable `raw_content` target. `read_batch` also
 supplies `prior_clean_context` and `next_raw_context`; both are explicitly

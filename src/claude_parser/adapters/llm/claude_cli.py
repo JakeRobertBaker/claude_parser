@@ -44,7 +44,9 @@ class ClaudeCLIAdapter:
                 "--strict-mcp-config",
                 "--allowedTools",
                 "mcp__batch_tools__read_batch,"
+                "mcp__batch_tools__inspect_tree,"
                 "mcp__batch_tools__submit_clean,"
+                "mcp__batch_tools__adjust_depths,"
                 "mcp__batch_tools__commit_batch",
             ])
         else:

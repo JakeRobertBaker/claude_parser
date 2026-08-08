@@ -8,13 +8,16 @@ Parses raw markdown into a validated annotation tree using a batch MCP workflow.
 - `ParsingService` owns run progression orchestration.
 - `run_engine.py` exposes pure planning/advancement functions.
 - `FilesystemStateStore` is persistence-focused (raw/clean/state/tree/log artifacts).
-- `BatchToolsService` owns tool semantics (`read_batch`, `submit_clean`, `commit_batch`) with explicit batch sessions.
+- `BatchToolsService` owns batch reading, validation, tree review/depth edits, and commit semantics.
 - Authoritative annotation schema lives in `@docs/annotation_schema.txt` (runtime condensed copy: `src/claude_parser/application/prompt_templates.py`).
 - Detailed architecture and end-to-end run flow: `@docs/architecture.md`.
 
 ## Commands
 
 ```bash
+# Install the Pi SDK and KaTeX validator used by every adapter
+npm install
+
 # Unit Tests
 uv run python -m pytest tests/
 
@@ -40,9 +43,14 @@ uv run python -m claude_parser.cli \
 ```
 
 Omit `--task-model` to use Pi's configured default. The Pi agent is intentionally
-given only `read_batch`, `submit_clean`, and `commit_batch`; built-in filesystem and
-shell tools, extensions, skills, prompt templates, and ambient context files are not
-loaded. See `docs/pi_adapter.md` for the design and operational details.
+given only the batch read, tree inspection, clean submission, depth adjustment,
+and commit tools; built-in filesystem and shell tools, extensions, skills, prompt
+templates, and ambient context files are not loaded. See `docs/pi_adapter.md` for
+the design and operational details.
+
+Every adapter validates submitted math with KaTeX. The validator automatically
+repairs doubled alphabetic command escapes inside math, reports those corrections,
+and rejects remaining parse errors before a batch can be committed.
 
 Pi persists its native session and a content-safe live event timeline below the
 state directory's `logs/pi/` tree. `--pi-debug-stream-log` additionally records

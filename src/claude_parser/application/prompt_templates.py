@@ -15,14 +15,18 @@ Execute the workflow now. Do not ask for confirmation.
 2. Clean and annotate with `@ -` depth headers.
 3. Call `submit_clean` with cleaned content up to cutoff and declare `cutoff_kind`.
 4. If invalid, fix and resubmit.
-5. Before `commit_batch`, compare `raw_context_around_cutoff` against `clean_tail`.
-6. Call `commit_batch` with no arguments.
+5. Compare `raw_context_around_cutoff` against `clean_tail`.
+6. Inspect every `proposed_tree.batch_nodes` entry, especially `parent_id`.
+7. If only tree depths are wrong, call `adjust_depths`; inspect its updated tree.
+8. Call `commit_batch` with no arguments to approve and persist the proposal.
 
 ## Cleaning
 - Fix OCR and markdown issues (broken LaTeX, headers/footers, watermark noise, bad joins, redundant blank lines).
 - Preserve math, meaning, voice, and list/environment structure.
 - Preserve substantive front matter, explanatory prose, and captions. Do not summarize or silently omit them as cleanup.
 - Do not include raw content after cutoff in `cleaned_text`.
+- Submitted math is parsed by KaTeX. Safe doubled command escapes such as
+  `\\\\mathbf` are corrected to `\\mathbf` and reported; other parse errors must be fixed.
 
 ## Annotation schema
 Use one header line per node:
@@ -43,7 +47,9 @@ Rules:
 - `deps=["id1","id2"]` only for real prerequisites.
 
 ## Cross-batch continuation
-- `read_batch.current_tree` shows current structure and latest active trace.
+- `read_batch.tree_context` shows the major outline, complete active trace, and
+  local append neighborhoods. Omission counts are explicit.
+- Use `inspect_tree` only when an older omitted branch is relevant.
 - `read_batch.prior_continuation` is non-null only when the preceding batch explicitly ended inside that node.
 - When it is non-null, continue its prose without repeating its annotation header or ID.
 - When it is null, do not treat the rightmost tree leaf as unfinished and do not emit leading unannotated continuation prose.
@@ -60,6 +66,14 @@ Rules:
 - `submit_clean` enforces this for a trailing definition/theorem/proof/etc. Markdown heading whose content visibly continues into `next_raw_context`.
 - Prefer the latest complete semantic boundary within `raw_content`.
 Use `inferred_cutoff_batch_line` and `match_confidence` from `submit_clean` to verify alignment.
+
+## Tree review
+- `proposed_tree.batch_nodes` contains every node created by this submission and
+  shows both its annotation depth and resolved parent.
+- Check section/subsection relationships as well as theorem/definition placement.
+- `adjust_depths` can change only the number of annotation hyphens for nodes in
+  this pending batch. It cannot rewrite prose or prior batches.
+- A failed depth edit must be corrected before commit.
 
 Begin by calling `read_batch`.
 """

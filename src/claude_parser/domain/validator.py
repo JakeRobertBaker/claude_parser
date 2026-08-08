@@ -58,6 +58,8 @@ def validate_annotations(
     known = set(known_ids) if known_ids else set()
     seen_ids: set[str] = set()
     node_types: dict[str, str | None] = {}
+    previous_header: AnnotationEvent | None = None
+    cleaned_lines = cleaned_text.splitlines() if cleaned_text is not None else []
 
     if cleaned_text is not None and not has_existing_nodes:
         if _leading_nonempty_content_before_first_header(cleaned_text):
@@ -69,6 +71,26 @@ def validate_annotations(
     for event in events:
         if event.event_type != "header":
             continue
+
+        if (
+            previous_header is not None
+            and previous_header.node_type is None
+            and event.node_type in _VALID_NODE_TYPES
+            and event.depth <= previous_header.depth
+            and cleaned_text is not None
+        ):
+            intervening = cleaned_lines[
+                previous_header.line_number : event.line_number - 1
+            ]
+            if not any(line.strip() for line in intervening):
+                result.errors.append(
+                    f"Line {event.line_number}: typed node '{event.id}' at depth "
+                    f"{event.depth} falls outside immediately preceding empty "
+                    f"container '{previous_header.id}' at depth "
+                    f"{previous_header.depth}; use depth "
+                    f"{previous_header.depth + 1} or greater, or add the "
+                    "container's intended content before this node."
+                )
 
         if event.id in seen_ids or event.id in known:
             result.errors.append(f"Line {event.line_number}: duplicate id '{event.id}'")
@@ -113,5 +135,7 @@ def validate_annotations(
                     f"Line {event.line_number}: dependency '{dep_id}' "
                     f"on node '{event.id}' not found"
                 )
+
+        previous_header = event
 
     return result

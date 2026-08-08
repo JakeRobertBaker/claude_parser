@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict
 from typing import Any
 
 from claude_parser.application.batch_tools.cutoff_alignment import infer_cutoff_line
 from claude_parser.application.batch_tools.models import (
+    AdjustDepthsResult,
     CommitResult,
     PriorContinuationPayload,
     ReadBatchPayload,
@@ -16,7 +18,11 @@ from claude_parser.application.batch_tools.models import (
 from claude_parser.application.batch_tools.semantic_boundary import (
     incomplete_trailing_semantic_unit_start,
 )
-from claude_parser.application.batch_tools.tree_preview import tree_preview
+from claude_parser.application.batch_tools.tree_views import (
+    inspect_tree,
+    proposed_tree,
+    tree_context,
+)
 from claude_parser.application.serialization import tree_from_dict, tree_to_dict
 from claude_parser.application.tokens import approximate_claude_tokens
 from claude_parser.domain.annotation_parser import AnnotationEvent, parse_annotations
@@ -27,6 +33,10 @@ from claude_parser.domain.annotation_tree_builder import (
 )
 from claude_parser.domain.node import TreeDict
 from claude_parser.domain.validator import validate_annotations
+from claude_parser.ports.math_validation import (
+    MathValidationPort,
+    MathValidationResult,
+)
 from claude_parser.ports.state import BatchContext, StatePort
 
 logger = logging.getLogger(__name__)
@@ -39,8 +49,9 @@ _CLEAN_TOKEN_HARD_WARNING_RATIO = 0.4
 class BatchToolsService:
     """Application service backing the MCP batch tools."""
 
-    def __init__(self, state: StatePort):
+    def __init__(self, state: StatePort, math_validator: MathValidationPort):
         self._state = state
+        self._math_validator = math_validator
         self._context: BatchContext | None = None
         self._known_ids: list[str] = []
         self._tree_dict: TreeDict = TreeDict()
@@ -66,6 +77,11 @@ class BatchToolsService:
         self._inferred_cutoff_line: int | None = None
         self._committed_source_line: int | None = None
         self._continuation_node_id: str | None = None
+        self._pending_cleaned_text: str | None = None
+        self._pending_events: list[AnnotationEvent] = []
+        self._pending_tree: TreeDict | None = None
+        self._pending_math_validation: dict[str, Any] = {}
+        self._pending_cutoff_kind: str | None = None
 
     def succeeded(self) -> bool:
         return self._submitted
@@ -83,6 +99,13 @@ class BatchToolsService:
         if name == "read_batch":
             payload = self.build_read_batch_payload()
             return asdict(payload)
+        if name == "inspect_tree":
+            return inspect_tree(
+                self._tree_dict,
+                arguments["node_id"],
+                child_offset=arguments.get("child_offset", 0),
+                child_limit=arguments.get("child_limit", 50),
+            )
         if name == "submit_clean":
             cleaned_text = arguments["cleaned_text"]
             result = self.handle_submit_clean(
@@ -94,6 +117,9 @@ class BatchToolsService:
             if data["match_confidence"] is not None:
                 data["match_confidence"] = round(data["match_confidence"], 3)
             return data
+        if name == "adjust_depths":
+            result = self.handle_adjust_depths(arguments["edits"])
+            return asdict(result)
         if name == "commit_batch":
             result = self.handle_commit_batch()
             if result.success:
@@ -107,7 +133,7 @@ class BatchToolsService:
             raw_content=context.raw_content,
             batch_line_count=context.raw_line_count,
             raw_token_count=context.raw_token_count,
-            current_tree=tree_preview(self._tree_dict),
+            tree_context=tree_context(self._tree_dict),
             prior_clean_context=context.prior_clean_context,
             next_raw_context=context.next_raw_context,
             next_raw_context_line_count=context.next_raw_context_line_count,
@@ -124,8 +150,35 @@ class BatchToolsService:
         continuation_node_id: str | None = None,
     ) -> SubmitCleanResult:
         context = self._require_context()
+        self._clear_pending()
         errors: list[str] = []
         warnings: list[str] = []
+        math_payload: dict[str, Any] = {}
+
+        try:
+            math_result = self._math_validator.validate(cleaned_text)
+        except RuntimeError as exc:
+            errors.append(f"Math validation unavailable: {exc}")
+            self._clear_pending()
+            return self._finalize_submit(
+                errors,
+                warnings,
+                cutoff_kind=cutoff_kind,
+                continuation_node_id=continuation_node_id,
+            )
+
+        cleaned_text = math_result.normalized_text
+        math_payload = self._math_payload(math_result)
+        errors.extend(
+            f"Line {item.line}, column {item.column}: {item.message} "
+            f"({item.code})."
+            for item in math_result.errors
+        )
+        warnings.extend(
+            f"Line {item.line}, column {item.column}: {item.message} "
+            f"({item.code})."
+            for item in math_result.warnings
+        )
 
         if cutoff_kind not in {"clean_boundary", "continuation"}:
             errors.append(
@@ -200,6 +253,7 @@ class BatchToolsService:
                 warnings,
                 cutoff_kind=cutoff_kind,
                 continuation_node_id=continuation_node_id,
+                math_validation=math_payload,
             )
 
         assert alignment.cutoff_line is not None
@@ -286,6 +340,7 @@ class BatchToolsService:
                 next_raw_context_violation=next_raw_context_violation,
                 cutoff_kind=cutoff_kind,
                 continuation_node_id=continuation_node_id,
+                math_validation=math_payload,
             )
 
         if cleaned_text and not cleaned_text.endswith("\n"):
@@ -297,11 +352,13 @@ class BatchToolsService:
         cleaned_lines = cleaned_text.splitlines()
         clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
 
-        proposed_tree = tree_preview(self._tree_dict)
+        proposed_tree_payload: dict[str, Any] = {}
         proposed_tree_dict: TreeDict | None = None
         try:
             proposed_tree_dict = self._build_proposed_tree(events, cleaned_text)
-            proposed_tree = tree_preview(proposed_tree_dict)
+            proposed_tree_payload = proposed_tree(
+                self._tree_dict, proposed_tree_dict, events
+            )
         except (ValueError, KeyError) as exc:
             logger.warning("proposed_tree failed: %s", exc)
             errors.append(f"Could not build proposed_tree: {exc}")
@@ -325,11 +382,16 @@ class BatchToolsService:
                     )
                 )
 
-        if not errors:
-            full_content = cleaned_text + "<!-- cutoff -->\n"
-            self._state.write_clean_batch(self._current_ordinal, full_content)
+        if not errors and proposed_tree_dict is not None:
+            self._pending_cleaned_text = cleaned_text
+            self._pending_events = events
+            self._pending_tree = proposed_tree_dict
+            self._pending_math_validation = math_payload
+            self._pending_cutoff_kind = cutoff_kind
             self._inferred_cutoff_line = cutoff_line
             self._continuation_node_id = continuation_node_id
+        else:
+            self._clear_pending()
 
         return self._finalize_submit(
             errors,
@@ -338,7 +400,8 @@ class BatchToolsService:
             confidence=confidence,
             raw_context=[line.rstrip("\n") for line in raw_context],
             clean_tail=clean_tail,
-            proposed_tree=proposed_tree,
+            proposed_tree=proposed_tree_payload,
+            math_validation=math_payload,
             cutoff_kind=cutoff_kind,
             continuation_node_id=continuation_node_id,
             next_raw_context_violation=next_raw_context_violation,
@@ -353,7 +416,8 @@ class BatchToolsService:
         confidence: float | None = None,
         raw_context: list[str] | None = None,
         clean_tail: list[str] | None = None,
-        proposed_tree: str = "",
+        proposed_tree: dict[str, Any] | None = None,
+        math_validation: dict[str, Any] | None = None,
         cutoff_kind: str | None = None,
         continuation_node_id: str | None = None,
         next_raw_context_violation: bool = False,
@@ -373,7 +437,8 @@ class BatchToolsService:
             match_confidence=confidence,
             raw_context_around_cutoff=raw_context or [],
             clean_tail=clean_tail or [],
-            proposed_tree=proposed_tree,
+            proposed_tree=proposed_tree or {},
+            math_validation=math_validation or {},
             batch_line_count=batch_line_count,
             rollback_lines=rollback_lines,
             next_raw_context_violation=next_raw_context_violation,
@@ -383,9 +448,145 @@ class BatchToolsService:
         self._last_submit_valid = result.valid
         return result
 
+    def handle_adjust_depths(
+        self, edits: list[dict[str, Any]]
+    ) -> AdjustDepthsResult:
+        if self._pending_cleaned_text is None or self._pending_tree is None:
+            self._last_submit_valid = False
+            return AdjustDepthsResult(
+                valid=False,
+                errors=[
+                    "No pending valid submission. Call submit_clean until valid=true "
+                    "before adjust_depths."
+                ],
+            )
+
+        current_proposal = proposed_tree(
+            self._tree_dict, self._pending_tree, self._pending_events
+        )
+        errors: list[str] = []
+        if not isinstance(edits, list) or not edits:
+            errors.append("edits must be a non-empty list.")
+            return self._failed_adjust(errors, current_proposal)
+
+        headers = {
+            event.id: event
+            for event in self._pending_events
+            if event.event_type == "header"
+        }
+        normalized_edits: list[dict[str, int | str]] = []
+        seen: set[str] = set()
+        for edit in edits:
+            if not isinstance(edit, dict):
+                errors.append("Each depth edit must be an object.")
+                continue
+            node_id = edit.get("node_id")
+            depth = edit.get("depth")
+            if not isinstance(node_id, str) or not node_id:
+                errors.append("Each depth edit requires a non-empty node_id.")
+                continue
+            if node_id in seen:
+                errors.append(f"Duplicate depth edit for node '{node_id}'.")
+                continue
+            seen.add(node_id)
+            if node_id not in headers:
+                errors.append(
+                    f"Node '{node_id}' was not created by the pending batch and "
+                    "cannot be depth-edited."
+                )
+                continue
+            if isinstance(depth, bool) or not isinstance(depth, int):
+                errors.append(f"Depth for node '{node_id}' must be an integer.")
+                continue
+            if depth < 1 or depth > 32:
+                errors.append(
+                    f"Depth for node '{node_id}' must be between 1 and 32."
+                )
+                continue
+            normalized_edits.append({"node_id": node_id, "depth": depth})
+
+        if errors:
+            return self._failed_adjust(errors, current_proposal)
+
+        lines = self._pending_cleaned_text.splitlines(keepends=True)
+        for edit in normalized_edits:
+            node_id = str(edit["node_id"])
+            depth = int(edit["depth"])
+            line_index = headers[node_id].line_number - 1
+            line = lines[line_index]
+            ending = "\n" if line.endswith("\n") else ""
+            body = line[:-1] if ending else line
+            match = re.match(r"^(\s*@\s*)-+(\s+.*)$", body)
+            if match is None:
+                errors.append(
+                    f"Could not locate the annotation depth marker for '{node_id}'."
+                )
+                continue
+            lines[line_index] = (
+                match.group(1) + ("-" * depth) + match.group(2) + ending
+            )
+        if errors:
+            return self._failed_adjust(errors, current_proposal)
+
+        snapshot = (
+            self._pending_cleaned_text,
+            self._pending_events,
+            self._pending_tree,
+            self._pending_math_validation,
+            self._inferred_cutoff_line,
+            self._continuation_node_id,
+            self._pending_cutoff_kind,
+        )
+        result = self.handle_submit_clean(
+            "".join(lines),
+            cutoff_kind=self._pending_cutoff_kind or "clean_boundary",
+            continuation_node_id=self._continuation_node_id,
+        )
+        if not result.valid:
+            (
+                self._pending_cleaned_text,
+                self._pending_events,
+                self._pending_tree,
+                self._pending_math_validation,
+                self._inferred_cutoff_line,
+                self._continuation_node_id,
+                self._pending_cutoff_kind,
+            ) = snapshot
+            self._last_submit_valid = False
+            return AdjustDepthsResult(
+                valid=False,
+                errors=result.errors,
+                warnings=result.warnings,
+                proposed_tree=current_proposal,
+                math_validation=self._pending_math_validation,
+            )
+
+        return AdjustDepthsResult(
+            valid=True,
+            warnings=result.warnings,
+            applied_edits=normalized_edits,
+            proposed_tree=result.proposed_tree,
+            math_validation=result.math_validation,
+        )
+
+    def _failed_adjust(
+        self, errors: list[str], current_proposal: dict[str, Any]
+    ) -> AdjustDepthsResult:
+        self._last_submit_valid = False
+        return AdjustDepthsResult(
+            valid=False,
+            errors=errors,
+            proposed_tree=current_proposal,
+            math_validation=self._pending_math_validation,
+        )
+
     def handle_commit_batch(self) -> CommitResult:
         cutoff_batch_line = self._inferred_cutoff_line
-        if cutoff_batch_line is None or not self._last_submit_valid:
+        if (
+            cutoff_batch_line is None
+            or not self._last_submit_valid
+            or self._pending_cleaned_text is None
+        ):
             return CommitResult(
                 success=False,
                 error=(
@@ -394,9 +595,30 @@ class BatchToolsService:
             )
 
         context = self._require_context()
+        full_content = self._pending_cleaned_text + "<!-- cutoff -->\n"
+        self._state.write_clean_batch(self._current_ordinal, full_content)
         self._committed_source_line = context.raw_start_line + cutoff_batch_line
         self._submitted = True
         return CommitResult(success=True)
+
+    def _clear_pending(self) -> None:
+        self._last_submit_valid = False
+        self._inferred_cutoff_line = None
+        self._continuation_node_id = None
+        self._pending_cleaned_text = None
+        self._pending_events = []
+        self._pending_tree = None
+        self._pending_math_validation = {}
+        self._pending_cutoff_kind = None
+
+    @staticmethod
+    def _math_payload(result: MathValidationResult) -> dict[str, Any]:
+        return {
+            "expressions_checked": result.expressions_checked,
+            "corrections": [asdict(item) for item in result.corrections],
+            "warnings": [asdict(item) for item in result.warnings],
+            "errors": [asdict(item) for item in result.errors],
+        }
 
     def _require_context(self) -> BatchContext:
         if self._context is None:
@@ -504,6 +726,26 @@ _TOOL_SPECS: list[dict[str, Any]] = [
         "meta": {"anthropic/maxResultSizeChars": 500000},
     },
     {
+        "name": "inspect_tree",
+        "description": (
+            "Inspect one existing tree node, its ancestors, and a paginated slice "
+            "of its direct children. Use when tree_context omits an older branch."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_id": {"type": "string"},
+                "child_offset": {"type": "integer", "minimum": 0},
+                "child_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+            },
+            "required": ["node_id"],
+        },
+    },
+    {
         "name": "submit_clean",
         "description": (
             "Submit cleaned markdown with annotations. Returns validation info, inferred cutoff, "
@@ -539,9 +781,40 @@ _TOOL_SPECS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "adjust_depths",
+        "description": (
+            "Transactionally edit only the annotation depths of nodes created by "
+            "the pending valid submission. Returns the complete updated batch tree."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "edits": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "node_id": {"type": "string"},
+                            "depth": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 32,
+                            },
+                        },
+                        "required": ["node_id", "depth"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["edits"],
+        },
+    },
+    {
         "name": "commit_batch",
         "description": (
-            "Finalize this batch using the valid cutoff inferred by submit_clean."
+            "Approve the displayed proposed tree, persist the pending clean batch, "
+            "and finalize its validated cutoff."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },

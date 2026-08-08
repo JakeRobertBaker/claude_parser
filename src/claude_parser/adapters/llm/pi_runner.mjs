@@ -92,7 +92,8 @@ function boundedMessages(value) {
 function toolResultSummary(toolName, toolCallId, result, durationMs) {
   const outcome = result?.status === "error"
     ? "application_error"
-    : toolName === "submit_clean" && result?.valid !== true
+    : (toolName === "submit_clean" || toolName === "adjust_depths")
+        && result?.valid !== true
       ? "invalid"
       : "ok";
   const summary = {
@@ -114,9 +115,19 @@ function toolResultSummary(toolName, toolCallId, result, durationMs) {
         : 0,
       knownIdCount: Array.isArray(result.known_ids) ? result.known_ids.length : 0,
       hasPriorContinuation: result.prior_continuation != null,
+      treeNodeCount: result.tree_context?.node_count ?? 0,
     };
   }
-  if (toolName === "submit_clean") {
+  if (toolName === "inspect_tree" && outcome === "ok") {
+    return {
+      ...summary,
+      ancestorCount: Array.isArray(result.ancestors) ? result.ancestors.length : 0,
+      returnedChildCount: Array.isArray(result.children) ? result.children.length : 0,
+      totalChildren: result.total_children,
+      hasNextPage: result.next_child_offset != null,
+    };
+  }
+  if (toolName === "submit_clean" || toolName === "adjust_depths") {
     const errors = boundedMessages(result?.errors);
     const warnings = boundedMessages(result?.warnings);
     return {
@@ -126,6 +137,11 @@ function toolResultSummary(toolName, toolCallId, result, durationMs) {
       warningCount: warnings.length,
       errors,
       warnings,
+      mathExpressionCount: result?.math_validation?.expressions_checked ?? 0,
+      mathCorrectionCount: result?.math_validation?.corrections?.length ?? 0,
+      mathErrorCount: result?.math_validation?.errors?.length ?? 0,
+      proposedNodeCount: result?.proposed_tree?.batch_nodes?.length ?? 0,
+      appliedDepthEditCount: result?.applied_edits?.length ?? 0,
     };
   }
   return {
@@ -136,7 +152,13 @@ function toolResultSummary(toolName, toolCallId, result, durationMs) {
 }
 
 export function buildTools(specs, endpoint, workflow, options = {}) {
-  const expected = new Set(["read_batch", "submit_clean", "commit_batch"]);
+  const expected = new Set([
+    "read_batch",
+    "inspect_tree",
+    "submit_clean",
+    "adjust_depths",
+    "commit_batch",
+  ]);
   const available = new Set(specs.map((spec) => spec.name));
   for (const name of expected) {
     if (!available.has(name)) throw new Error(`Batch tool server is missing ${name}`);
@@ -206,6 +228,9 @@ export function buildTools(specs, endpoint, workflow, options = {}) {
           if (spec.name === "submit_clean") {
             workflow.validSubmission = result.valid === true;
             workflow.submission = cutoffSummary(result);
+          }
+          if (spec.name === "adjust_depths") {
+            workflow.validSubmission = result.valid === true;
           }
           if (spec.name === "commit_batch") workflow.committed = result.status === "ok";
 
@@ -497,7 +522,7 @@ async function main() {
       const reminder = workflow.validSubmission
         ? "The cleaned batch is valid but not committed. Call commit_batch now."
         : workflow.read
-          ? "The batch is not committed. Complete submit_clean validation, then call commit_batch."
+          ? "The batch is not committed. Complete submit_clean or adjust_depths validation, review proposed parents, then call commit_batch."
           : "You have not started the required workflow. Call read_batch and complete the batch now.";
       await session.prompt(reminder, { expandPromptTemplates: false });
     }

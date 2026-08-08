@@ -5,6 +5,7 @@ import sys
 
 from claude_parser.adapters.llm.claude_cli import ClaudeCLIAdapter
 from claude_parser.adapters.llm.pi_sdk import PiSDKAdapter
+from claude_parser.adapters.math import KaTeXMathValidator
 from claude_parser.adapters.mcp.server import BatchMCPServer
 from claude_parser.adapters.state.filesystem import FilesystemStateStore
 from claude_parser.application.parsing import ParsingService
@@ -125,6 +126,13 @@ def main() -> None:
     )
     state_store.init()
 
+    math_validator = KaTeXMathValidator()
+    try:
+        math_validator.validate("")
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+
     if args.llm_adapter == "pi-sdk":
         llm = PiSDKAdapter(
             log_root=os.path.join(config.state_dir, "logs", "pi"),
@@ -132,7 +140,7 @@ def main() -> None:
         )
     else:
         llm = ClaudeCLIAdapter()
-    batch_tools = BatchMCPServer(state_store, config.state_dir)
+    batch_tools = BatchMCPServer(state_store, config.state_dir, math_validator)
     if not config.dry_run:
         batch_tools.start()
 

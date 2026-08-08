@@ -9,6 +9,7 @@
     "test:pi": "node --test tests/pi_runner.test.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.1"
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "katex": "^0.16.22"
   }
 }

@@ -17,6 +17,15 @@ const SPECS = [
     input_schema: { type: "object", properties: {} },
   },
   {
+    name: "inspect_tree",
+    description: "Inspect a tree branch.",
+    input_schema: {
+      type: "object",
+      properties: { node_id: { type: "string" } },
+      required: ["node_id"],
+    },
+  },
+  {
     name: "submit_clean",
     description: "Submit clean text.",
     input_schema: {
@@ -26,6 +35,15 @@ const SPECS = [
         cutoff_kind: { type: "string" },
       },
       required: ["cleaned_text", "cutoff_kind"],
+    },
+  },
+  {
+    name: "adjust_depths",
+    description: "Adjust pending depths.",
+    input_schema: {
+      type: "object",
+      properties: { edits: { type: "array" } },
+      required: ["edits"],
     },
   },
   {
@@ -73,7 +91,11 @@ test("batch tools enforce ordering and retain safe outcome history", async (t) =
               inferred_cutoff_batch_line: 4,
             }
           : { valid: true, errors: [], warnings: [] }
-        : { status: "ok" };
+        : request.name === "adjust_depths"
+          ? { valid: true, errors: [], warnings: [], applied_edits: request.arguments.edits }
+          : request.name === "inspect_tree"
+            ? { ancestors: [], children: [], total_children: 0, next_child_offset: null }
+            : { status: "ok" };
     return new Response(JSON.stringify(result));
   };
 
@@ -96,6 +118,7 @@ test("batch tools enforce ordering and retain safe outcome history", async (t) =
   const duplicateRead = await byName.read_batch.execute("call-3", {});
   assert.match(textPayload(duplicateRead).error, /already called/);
   assert.equal(calls.filter((call) => call.name === "read_batch").length, 1);
+  await byName.inspect_tree.execute("call-inspect", { node_id: "book" });
 
   const invalidSubmit = await byName.submit_clean.execute("call-invalid", {
     cleaned_text: "invalid clean",
@@ -107,6 +130,9 @@ test("batch tools enforce ordering and retain safe outcome history", async (t) =
     cleaned_text: "clean",
     cutoff_kind: "clean_boundary",
   });
+  await byName.adjust_depths.execute("call-adjust", {
+    edits: [{ node_id: "section_d", depth: 2 }],
+  });
   await byName.commit_batch.execute("call-5", {});
 
   assert.equal(workflow.committed, true);
@@ -117,13 +143,16 @@ test("batch tools enforce ordering and retain safe outcome history", async (t) =
       ["submit_clean", "application_error"],
       ["read_batch", "ok"],
       ["read_batch", "application_error"],
+      ["inspect_tree", "ok"],
       ["submit_clean", "invalid"],
       ["submit_clean", "ok"],
+      ["adjust_depths", "ok"],
       ["commit_batch", "ok"],
     ],
   );
-  assert.equal(observed[3].errorCount, 1);
-  assert.equal(observed[3].warningCount, 1);
+  assert.equal(observed[4].errorCount, 1);
+  assert.equal(observed[4].warningCount, 1);
+  assert.equal(observed[6].appliedDepthEditCount, 1);
   assert.equal(observed[1].rawTokenCount, 100);
   assert.doesNotMatch(JSON.stringify(observed), /sensitive|private_id/);
   assert.deepEqual(calls.at(-1), { name: "commit_batch", arguments: {} });
