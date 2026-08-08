@@ -42,7 +42,7 @@ function textPayload(result) {
   return JSON.parse(result.content[0].text);
 }
 
-test("batch tools enforce ordering, a single read, and inferred cutoff", async (t) => {
+test("batch tools enforce ordering and retain safe outcome history", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => {
     globalThis.fetch = originalFetch;
@@ -53,15 +53,37 @@ test("batch tools enforce ordering, a single read, and inferred cutoff", async (
     const request = JSON.parse(options.body);
     calls.push(request);
     const result = request.name === "read_batch"
-      ? { raw_content: "raw" }
+      ? {
+          raw_content: "sensitive raw markdown",
+          batch_line_count: 10,
+          raw_token_count: 100,
+          next_raw_context: "sensitive next context",
+          next_raw_context_line_count: 2,
+          next_raw_context_token_count: 20,
+          prior_clean_context: "sensitive prior context",
+          known_ids: ["private_id"],
+          prior_continuation: null,
+        }
       : request.name === "submit_clean"
-        ? { valid: true }
+        ? options.body.includes("invalid clean")
+          ? {
+              valid: false,
+              errors: ["Alignment failed."],
+              warnings: ["Cleaned text is short."],
+              inferred_cutoff_batch_line: 4,
+            }
+          : { valid: true, errors: [], warnings: [] }
         : { status: "ok" };
     return new Response(JSON.stringify(result));
   };
 
   const workflow = { read: false, validSubmission: false, committed: false };
-  const tools = buildTools(SPECS, "http://127.0.0.1/tools", workflow);
+  const observed = [];
+  let nowMs = 0;
+  const tools = buildTools(SPECS, "http://127.0.0.1/tools", workflow, {
+    now: () => nowMs += 5,
+    onToolResult: (summary) => observed.push(summary),
+  });
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
 
   const prematureSubmit = await byName.submit_clean.execute(
@@ -75,6 +97,12 @@ test("batch tools enforce ordering, a single read, and inferred cutoff", async (
   assert.match(textPayload(duplicateRead).error, /already called/);
   assert.equal(calls.filter((call) => call.name === "read_batch").length, 1);
 
+  const invalidSubmit = await byName.submit_clean.execute("call-invalid", {
+    cleaned_text: "invalid clean",
+    cutoff_kind: "clean_boundary",
+  });
+  assert.equal(textPayload(invalidSubmit).valid, false);
+
   await byName.submit_clean.execute("call-4", {
     cleaned_text: "clean",
     cutoff_kind: "clean_boundary",
@@ -82,6 +110,22 @@ test("batch tools enforce ordering, a single read, and inferred cutoff", async (
   await byName.commit_batch.execute("call-5", {});
 
   assert.equal(workflow.committed, true);
+  assert.deepEqual(workflow.toolHistory, observed);
+  assert.deepEqual(
+    observed.map(({ toolName, outcome }) => [toolName, outcome]),
+    [
+      ["submit_clean", "application_error"],
+      ["read_batch", "ok"],
+      ["read_batch", "application_error"],
+      ["submit_clean", "invalid"],
+      ["submit_clean", "ok"],
+      ["commit_batch", "ok"],
+    ],
+  );
+  assert.equal(observed[3].errorCount, 1);
+  assert.equal(observed[3].warningCount, 1);
+  assert.equal(observed[1].rawTokenCount, 100);
+  assert.doesNotMatch(JSON.stringify(observed), /sensitive|private_id/);
   assert.deepEqual(calls.at(-1), { name: "commit_batch", arguments: {} });
   assert.deepEqual(byName.commit_batch.parameters, {
     type: "object",

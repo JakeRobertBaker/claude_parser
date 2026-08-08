@@ -43,12 +43,17 @@ contains:
 
 - Pi's native, incrementally persisted JSONL session with completed messages;
 - `events.jsonl`, a live content-safe timeline of lifecycle, tool status,
-  usage/cost, errors, and throttled streaming character counts; and
+  usage/cost, errors, sanitized application outcomes, and throttled streaming
+  character counts; and
 - `manifest.json`, which records status and artifact locations.
 
 The safe event stream does not contain message text, thinking, tool arguments,
 tool results, or raw/clean Markdown. `logs/chunk_NNN.json` remains the concise
-application-facing report and links these detailed artifacts.
+application-facing report and links these detailed artifacts. It also retains a
+`workflow.toolHistory` entry for every tool attempt. These summaries distinguish
+transport completion from application outcomes such as a duplicate read, invalid
+submission, or rejected commit, and include bounded validation messages and cutoff
+metrics without copying document content.
 
 For unusual debugging, `--pi-debug-stream-log` adds `stream.jsonl` with every raw
 Pi stream event. This can contain the source Markdown, cleaned output, reasoning,

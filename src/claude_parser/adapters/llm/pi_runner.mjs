@@ -81,12 +81,69 @@ function cutoffSummary(result) {
   );
 }
 
-export function buildTools(specs, endpoint, workflow) {
+function boundedMessages(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((message) => typeof message === "string")
+    .slice(0, 20)
+    .map((message) => message.slice(0, 500));
+}
+
+function toolResultSummary(toolName, toolCallId, result, durationMs) {
+  const outcome = result?.status === "error"
+    ? "application_error"
+    : toolName === "submit_clean" && result?.valid !== true
+      ? "invalid"
+      : "ok";
+  const summary = {
+    toolName,
+    toolCallId,
+    durationMs,
+    outcome,
+  };
+
+  if (toolName === "read_batch" && outcome === "ok") {
+    return {
+      ...summary,
+      batchLineCount: result.batch_line_count,
+      rawTokenCount: result.raw_token_count,
+      nextRawContextLineCount: result.next_raw_context_line_count,
+      nextRawContextTokenCount: result.next_raw_context_token_count,
+      priorCleanContextCharacters: typeof result.prior_clean_context === "string"
+        ? result.prior_clean_context.length
+        : 0,
+      knownIdCount: Array.isArray(result.known_ids) ? result.known_ids.length : 0,
+      hasPriorContinuation: result.prior_continuation != null,
+    };
+  }
+  if (toolName === "submit_clean") {
+    const errors = boundedMessages(result?.errors);
+    const warnings = boundedMessages(result?.warnings);
+    return {
+      ...summary,
+      ...cutoffSummary(result ?? {}),
+      errorCount: errors.length,
+      warningCount: warnings.length,
+      errors,
+      warnings,
+    };
+  }
+  return {
+    ...summary,
+    status: result?.status,
+    error: typeof result?.error === "string" ? result.error.slice(0, 500) : null,
+  };
+}
+
+export function buildTools(specs, endpoint, workflow, options = {}) {
   const expected = new Set(["read_batch", "submit_clean", "commit_batch"]);
   const available = new Set(specs.map((spec) => spec.name));
   for (const name of expected) {
     if (!available.has(name)) throw new Error(`Batch tool server is missing ${name}`);
   }
+  const now = options.now ?? (() => Date.now());
+  const onToolResult = options.onToolResult ?? (() => {});
+  workflow.toolHistory ??= [];
 
   return specs
     .filter((spec) => expected.has(spec.name))
@@ -103,33 +160,39 @@ export function buildTools(specs, endpoint, workflow) {
         description: spec.description,
         parameters,
         executionMode: "sequential",
-        execute: async (_toolCallId, params) => {
-          if (spec.name === "read_batch" && workflow.read) {
+        execute: async (toolCallId, params) => {
+          const startedAt = now();
+          const finish = (result) => {
+            const summary = toolResultSummary(
+              spec.name,
+              toolCallId,
+              result,
+              Math.max(0, now() - startedAt),
+            );
+            workflow.toolHistory.push(summary);
+            onToolResult(summary);
             return {
-              content: [{ type: "text", text: JSON.stringify({
-                status: "error",
-                error: "read_batch was already called. Use the batch content already present in this conversation.",
-              }) }],
+              content: [{ type: "text", text: JSON.stringify(result) }],
               details: {},
             };
+          };
+          if (spec.name === "read_batch" && workflow.read) {
+            return finish({
+              status: "error",
+              error: "read_batch was already called. Use the batch content already present in this conversation.",
+            });
           }
           if (spec.name !== "read_batch" && !workflow.read) {
-            return {
-              content: [{ type: "text", text: JSON.stringify({
-                status: "error",
-                error: "Call read_batch before using other tools.",
-              }) }],
-              details: {},
-            };
+            return finish({
+              status: "error",
+              error: "Call read_batch before using other tools.",
+            });
           }
           if (spec.name === "commit_batch" && !workflow.validSubmission) {
-            return {
-              content: [{ type: "text", text: JSON.stringify({
-                status: "error",
-                error: "Call submit_clean until valid=true before commit_batch.",
-              }) }],
-              details: {},
-            };
+            return finish({
+              status: "error",
+              error: "Call submit_clean until valid=true before commit_batch.",
+            });
           }
 
           const args = spec.name === "commit_batch" ? {} : params;
@@ -146,10 +209,7 @@ export function buildTools(specs, endpoint, workflow) {
           }
           if (spec.name === "commit_batch") workflow.committed = result.status === "ok";
 
-          return {
-            content: [{ type: "text", text: JSON.stringify(result) }],
-            details: {},
-          };
+          return finish(result);
         },
       });
     });
@@ -384,8 +444,19 @@ async function main() {
     if (resolved.error) throw new Error(resolved.error);
 
     const specs = await fetchJson(config.toolEndpoint);
-    const workflow = { read: false, validSubmission: false, committed: false, submission: null };
-    const customTools = buildTools(specs, config.toolEndpoint, workflow);
+    const workflow = {
+      read: false,
+      validSubmission: false,
+      committed: false,
+      submission: null,
+      toolHistory: [],
+    };
+    const customTools = buildTools(specs, config.toolEndpoint, workflow, {
+      onToolResult: (summary) => telemetry.safe({
+        type: "tool_result_summary",
+        ...summary,
+      }),
+    });
     const toolNames = customTools.map((tool) => tool.name);
 
     const created = await createAgentSession({
