@@ -13,14 +13,15 @@ Execute the workflow now. Do not ask for confirmation.
 ## Workflow
 1. Call `read_batch`.
 2. Clean and annotate with `@ -` depth headers.
-3. Call `submit_clean` with only cleaned content up to cutoff.
+3. Call `submit_clean` with cleaned content up to cutoff and declare `cutoff_kind`.
 4. If invalid, fix and resubmit.
 5. Before `commit_batch`, compare `raw_context_around_cutoff` against `clean_tail`.
-6. Call `commit_batch` (no args unless overriding cutoff).
+6. Call `commit_batch` with no arguments.
 
 ## Cleaning
 - Fix OCR and markdown issues (broken LaTeX, headers/footers, watermark noise, bad joins, redundant blank lines).
 - Preserve math, meaning, voice, and list/environment structure.
+- Preserve substantive front matter, explanatory prose, and captions. Do not summarize or silently omit them as cleanup.
 - Do not include raw content after cutoff in `cleaned_text`.
 
 ## Annotation schema
@@ -38,15 +39,26 @@ Rules:
 - `type` is optional and only for semantic units: definition, theorem, lemma, proposition, corollary, proof, remark, example, exercise, axiom.
 - Containers (book/chapter/section/subsection) have no `type`.
 - Proofs are separate nodes with `type="proof"` and `proves="<id>"`.
+- This includes proofs whose source begins inline with `Proof` rather than with a Markdown heading.
 - `deps=["id1","id2"]` only for real prerequisites.
 
 ## Cross-batch continuation
 - `read_batch.current_tree` shows current structure and latest active trace.
-- If your cutoff lands inside an unfinished unit, keep it open by ending on that depth.
-- Prefer clean boundaries but do not force premature closure.
+- `read_batch.prior_continuation` is non-null only when the preceding batch explicitly ended inside that node.
+- When it is non-null, continue its prose without repeating its annotation header or ID.
+- When it is null, do not treat the rightmost tree leaf as unfinished and do not emit leading unannotated continuation prose.
+- A continuation is allowed only for `prior_continuation` or for a genuinely oversized unit introduced in the opening annotation block of this batch.
+- If a later-starting unit crosses the end of `raw_content`, roll back before it. Do not declare it as a continuation.
+- For an allowed oversized unit, submit with `cutoff_kind="continuation"` and set `continuation_node_id` to the proposed tree's active leaf.
+- At a complete semantic boundary, submit with `cutoff_kind="clean_boundary"` and omit `continuation_node_id`.
 
 ## Cutoff guidance
-Aim for about 50%+ of the raw batch when possible. Natural boundaries matter more.
+- `raw_content` is the only committable source. Clean and annotate only material from this field.
+- `prior_clean_context` and `next_raw_context` are read-only context. Never reproduce text from either field in `cleaned_text`.
+- Use `next_raw_context` to determine whether a definition, theorem, proof, list item, exercise, or comparable unit at the end of `raw_content` continues beyond the batch.
+- If it continues, roll back and stop before that unit begins. The next batch will receive the complete unit as `raw_content`.
+- `submit_clean` enforces this for a trailing definition/theorem/proof/etc. Markdown heading whose content visibly continues into `next_raw_context`.
+- Prefer the latest complete semantic boundary within `raw_content`.
 Use `inferred_cutoff_batch_line` and `match_confidence` from `submit_clean` to verify alignment.
 
 Begin by calling `read_batch`.

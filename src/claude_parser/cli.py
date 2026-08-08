@@ -1,8 +1,10 @@
 import argparse
 import logging
+import os
 import sys
 
 from claude_parser.adapters.llm.claude_cli import ClaudeCLIAdapter
+from claude_parser.adapters.llm.pi_sdk import PiSDKAdapter
 from claude_parser.adapters.mcp.server import BatchMCPServer
 from claude_parser.adapters.state.filesystem import FilesystemStateStore
 from claude_parser.application.parsing import ParsingService
@@ -33,18 +35,46 @@ def main() -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print prompts without invoking Claude.",
+        help="Print prompts without invoking an agent.",
+    )
+    parser.add_argument(
+        "--llm-adapter",
+        choices=("claude-cli", "pi-sdk"),
+        default="claude-cli",
+        help="Agent runtime to use (default: claude-cli).",
     )
     parser.add_argument(
         "--task-model",
-        default="haiku",
-        help="Model for batch processing (default: haiku).",
+        default=None,
+        help=(
+            "Model for batch processing. Defaults to haiku for claude-cli and "
+            "Pi's configured default for pi-sdk. Pi accepts provider/model patterns."
+        ),
     )
     parser.add_argument(
         "--batch-tokens",
         type=int,
         default=16000,
-        help="Approximate token budget per batch (default: 16000).",
+        help="Approximate core work target per batch (default: 16000).",
+    )
+    parser.add_argument(
+        "--prior-clean-context-tokens",
+        type=int,
+        default=2000,
+        help="Read-only cleaned context before the batch (default: 2000).",
+    )
+    parser.add_argument(
+        "--next-raw-context-tokens",
+        type=int,
+        default=2000,
+        help="Read-only raw context after the committable batch (default: 2000).",
+    )
+    parser.add_argument(
+        "--pi-debug-stream-log",
+        action="store_true",
+        help=(
+            "Persist sensitive raw Pi stream events, including text and thinking deltas."
+        ),
     )
     parser.add_argument(
         "--max-sections",
@@ -79,10 +109,13 @@ def main() -> None:
         state_dir=args.state,
         task_model=args.task_model,
         batch_tokens=args.batch_tokens,
+        prior_clean_context_tokens=args.prior_clean_context_tokens,
+        next_raw_context_tokens=args.next_raw_context_tokens,
         timeout=args.timeout,
         dry_run=args.dry_run,
         resume=args.resume,
         max_sections=args.max_sections,
+        pi_debug_stream_log=args.pi_debug_stream_log,
     )
 
     state_store = FilesystemStateStore(
@@ -92,9 +125,16 @@ def main() -> None:
     )
     state_store.init()
 
-    llm = ClaudeCLIAdapter()
+    if args.llm_adapter == "pi-sdk":
+        llm = PiSDKAdapter(
+            log_root=os.path.join(config.state_dir, "logs", "pi"),
+            debug_stream_log=config.pi_debug_stream_log,
+        )
+    else:
+        llm = ClaudeCLIAdapter()
     batch_tools = BatchMCPServer(state_store, config.state_dir)
-    batch_tools.start()
+    if not config.dry_run:
+        batch_tools.start()
 
     try:
         service = ParsingService(
@@ -108,7 +148,8 @@ def main() -> None:
         logger.error("%s", e)
         sys.exit(1)
     finally:
-        batch_tools.stop()
+        if not config.dry_run:
+            batch_tools.stop()
 
 
 if __name__ == "__main__":

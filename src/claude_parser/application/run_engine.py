@@ -14,6 +14,7 @@ class RunSnapshot:
     next_start_line: int = 0
     next_chunk_id: int = 0
     sections_completed: int = 0
+    continuation_node_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -22,9 +23,13 @@ class BatchPlan:
     chunk_id: str
     start_line: int
     end_line: int
+    next_context_end_line: int
     raw_content: str
+    next_raw_context: str
     raw_line_count: int
     raw_token_count: int
+    next_raw_context_line_count: int
+    next_raw_context_token_count: int
     clean_token_target: int
 
 
@@ -36,6 +41,7 @@ def plan_next(
     snapshot: RunSnapshot,
     raw_lines: Sequence[str],
     batch_tokens: int,
+    next_raw_context_tokens: int,
     token_counter: TokenCounter,
 ) -> BatchPlan:
     start = snapshot.next_start_line
@@ -43,16 +49,27 @@ def plan_next(
         raise RuntimeError("No raw content left to plan a batch.")
 
     end = start
-    tokens = 0
+    tokens_by_line = 0
     while end < len(raw_lines):
-        tokens += token_counter(raw_lines[end])
+        tokens_by_line += token_counter(raw_lines[end])
         end += 1
-        if tokens >= batch_tokens:
+        if tokens_by_line >= batch_tokens:
             break
 
+    next_context_end = end
+    next_context_tokens_by_line = 0
+    while (
+        next_context_end < len(raw_lines)
+        and next_context_tokens_by_line < next_raw_context_tokens
+    ):
+        next_context_tokens_by_line += token_counter(raw_lines[next_context_end])
+        next_context_end += 1
+
     raw_content = "".join(raw_lines[start:end])
+    next_raw_context = "".join(raw_lines[end:next_context_end])
     raw_line_count = end - start
     raw_tokens = token_counter(raw_content)
+    next_context_token_count = token_counter(next_raw_context)
     clean_token_target = max(1, int(raw_tokens * 0.5))
 
     ordinal = snapshot.next_chunk_id
@@ -63,9 +80,13 @@ def plan_next(
         chunk_id=chunk_id,
         start_line=start,
         end_line=end,
+        next_context_end_line=next_context_end,
         raw_content=raw_content,
+        next_raw_context=next_raw_context,
         raw_line_count=raw_line_count,
         raw_token_count=raw_tokens,
+        next_raw_context_line_count=next_context_end - end,
+        next_raw_context_token_count=next_context_token_count,
         clean_token_target=clean_token_target,
     )
 
@@ -78,9 +99,14 @@ def clamp_cutoff(plan: BatchPlan, source_line: int) -> int:
     return max(lower, min(source_line, upper))
 
 
-def advance(snapshot: RunSnapshot, cutoff_line: int) -> RunSnapshot:
+def advance(
+    snapshot: RunSnapshot,
+    cutoff_line: int,
+    continuation_node_id: str | None = None,
+) -> RunSnapshot:
     return RunSnapshot(
         next_start_line=cutoff_line,
         next_chunk_id=snapshot.next_chunk_id + 1,
         sections_completed=snapshot.sections_completed + 1,
+        continuation_node_id=continuation_node_id,
     )

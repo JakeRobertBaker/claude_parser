@@ -24,3 +24,28 @@ uv run ruff check src/ tests/
 # ty - type checking
 uv run ty check src/ tests/
 ```
+
+## Pi SDK adapter
+
+The default remains the existing Claude CLI adapter. To use the restricted Pi SDK
+agent through your existing Pi/OpenRouter configuration:
+
+```bash
+npm install
+uv run python -m claude_parser.cli \
+  --raw path/to/raw.md \
+  --state path/to/state \
+  --llm-adapter pi-sdk \
+  --task-model openrouter/anthropic/your-model
+```
+
+Omit `--task-model` to use Pi's configured default. The Pi agent is intentionally
+given only `read_batch`, `submit_clean`, and `commit_batch`; built-in filesystem and
+shell tools, extensions, skills, prompt templates, and ambient context files are not
+loaded. See `docs/pi_adapter.md` for the design and operational details.
+
+Pi persists its native session and a content-safe live event timeline below the
+state directory's `logs/pi/` tree. `--pi-debug-stream-log` additionally records
+the full sensitive stream when needed. Each batch includes 2,000-token read-only
+contexts on both sides by default; tune them with
+`--prior-clean-context-tokens` and `--next-raw-context-tokens`.

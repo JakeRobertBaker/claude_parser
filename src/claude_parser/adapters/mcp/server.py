@@ -15,7 +15,7 @@ from mcp.server.lowlevel import Server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 
 from claude_parser.application.batch_tools import BatchToolsService
@@ -38,7 +38,7 @@ class BatchMCPServer(BatchToolsPort):
     def __init__(self, state: StatePort, state_dir: str):
         self._state_dir = os.path.abspath(state_dir)
         self._service = BatchToolsService(state)
-        self._port = _find_free_port()
+        self._port: int | None = None
         self._thread: threading.Thread | None = None
         self._uvicorn_server: Any = None
 
@@ -63,16 +63,25 @@ class BatchMCPServer(BatchToolsPort):
     def committed_source_line(self) -> int | None:
         return self._service.committed_source_line()
 
+    def committed_continuation_node_id(self) -> str | None:
+        return self._service.committed_continuation_node_id()
+
     @property
     def mcp_config_path(self) -> str:
         return self._mcp_config_file
 
+    @property
+    def tool_endpoint(self) -> str:
+        """Local JSON endpoint used by SDK adapters with native custom tools."""
+        return f"http://127.0.0.1:{self._require_port()}/batch-tools"
+
     def start(self) -> None:
+        self._port = _find_free_port()
         self._write_mcp_config()
         self._thread = threading.Thread(target=self._run_server, daemon=True)
         self._thread.start()
         self._wait_for_port()
-        logger.info("MCP server started on port %d", self._port)
+        logger.info("MCP server started on port %d", self._require_port())
 
     def stop(self) -> None:
         if self._uvicorn_server is not None:
@@ -117,11 +126,12 @@ class BatchMCPServer(BatchToolsPort):
     # -- Server lifecycle helpers --
 
     def _write_mcp_config(self) -> None:
+        port = self._require_port()
         config = {
             "mcpServers": {
                 "batch_tools": {
                     "type": "sse",
-                    "url": f"http://127.0.0.1:{self._port}/sse",
+                    "url": f"http://127.0.0.1:{port}/sse",
                 }
             }
         }
@@ -131,6 +141,7 @@ class BatchMCPServer(BatchToolsPort):
     def _run_server(self) -> None:
         import uvicorn
 
+        port = self._require_port()
         sse_transport = SseServerTransport("/messages/")
         mcp_server = self._mcp_server
 
@@ -143,15 +154,39 @@ class BatchMCPServer(BatchToolsPort):
                 )
             return Response()
 
+        async def list_http_tools(request: Request) -> JSONResponse:
+            _ = request
+            return JSONResponse(self._service.tool_specs())
+
+        async def call_http_tool(request: Request) -> JSONResponse:
+            try:
+                payload = await request.json()
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be a JSON object.")
+                name = payload.get("name")
+                arguments = payload.get("arguments", {})
+                if not isinstance(name, str):
+                    raise ValueError("Tool name must be a string.")
+                if not isinstance(arguments, dict):
+                    raise ValueError("Tool arguments must be a JSON object.")
+                data = self._service.call_tool(name, arguments)
+            except (KeyError, TypeError, ValueError) as exc:
+                return JSONResponse(
+                    {"status": "error", "error": str(exc)}, status_code=400
+                )
+            return JSONResponse(data)
+
         app = Starlette(
             routes=[
                 Route("/sse", endpoint=handle_sse, methods=["GET"]),
                 Mount("/messages/", app=sse_transport.handle_post_message),
+                Route("/batch-tools", endpoint=list_http_tools, methods=["GET"]),
+                Route("/batch-tools", endpoint=call_http_tool, methods=["POST"]),
             ]
         )
 
         config = uvicorn.Config(
-            app, host="127.0.0.1", port=self._port, log_level="warning"
+            app, host="127.0.0.1", port=port, log_level="warning"
         )
         server = uvicorn.Server(config)
         self._uvicorn_server = server
@@ -164,11 +199,17 @@ class BatchMCPServer(BatchToolsPort):
     def _wait_for_port(self, timeout: float = 10.0) -> None:
         import time
 
+        port = self._require_port()
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                with socket.create_connection(("127.0.0.1", self._port), timeout=0.5):
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
                     return
             except OSError:
                 time.sleep(0.1)
         raise RuntimeError(f"MCP server did not start within {timeout}s")
+
+    def _require_port(self) -> int:
+        if self._port is None:
+            raise RuntimeError("Batch tool server has not been started.")
+        return self._port

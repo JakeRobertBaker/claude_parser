@@ -9,7 +9,10 @@ from claude_parser.application.run_engine import (
     complete,
     plan_next,
 )
-from claude_parser.application.tokens import approximate_claude_tokens
+from claude_parser.application.tokens import (
+    approximate_claude_tokens,
+    tail_within_token_budget,
+)
 from claude_parser.config import ParserConfig
 from claude_parser.domain.annotation_parser import parse_annotations
 from claude_parser.domain.annotation_tree_builder import (
@@ -62,19 +65,27 @@ class ParsingService:
                 snapshot,
                 raw_lines,
                 self.config.batch_tokens,
+                self.config.next_raw_context_tokens,
                 approximate_claude_tokens,
             )
 
             self.state.write_raw_batch(plan.ordinal, plan.raw_content)
+            self.state.write_next_raw_context(plan.ordinal, plan.next_raw_context)
+            prior_clean_context = tail_within_token_budget(
+                self.state.read_prior_clean(plan.ordinal),
+                self.config.prior_clean_context_tokens,
+            )
             context = BatchContext(
                 raw_content=plan.raw_content,
                 raw_start_line=plan.start_line,
                 raw_end_line=plan.end_line,
                 raw_line_count=plan.raw_line_count,
                 raw_token_count=plan.raw_token_count,
-                prior_clean_tail=self.state.read_prior_clean_tail(
-                    plan.ordinal, self.config.context_lines
-                ),
+                next_raw_context=plan.next_raw_context,
+                next_raw_context_line_count=plan.next_raw_context_line_count,
+                next_raw_context_token_count=plan.next_raw_context_token_count,
+                prior_clean_context=prior_clean_context,
+                prior_continuation_node_id=snapshot.continuation_node_id,
                 memory_text=self.state.read_memory(),
                 clean_token_target=plan.clean_token_target,
             )
@@ -98,7 +109,9 @@ class ParsingService:
                 allowed_tools=[],
                 add_dirs=[],
                 timeout=self.config.timeout,
+                invocation_id=seq,
                 mcp_config_path=self.batch_tools.mcp_config_path,
+                tool_endpoint=self.batch_tools.tool_endpoint,
             )
 
             self.state.write_log(seq, result.stdout)
@@ -172,7 +185,11 @@ class ParsingService:
                     f"See failures/{seq}_raw_response.txt"
                 )
 
-            snapshot = advance(snapshot, clamp_cutoff(plan, committed_source_line))
+            snapshot = advance(
+                snapshot,
+                clamp_cutoff(plan, committed_source_line),
+                self.batch_tools.committed_continuation_node_id(),
+            )
             self.state.save_snapshot(snapshot)
             self.state.save_tree()
             self.state.commit_all(seq)

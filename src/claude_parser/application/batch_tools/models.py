@@ -7,13 +7,30 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class PriorContinuationPayload:
+    """Explicit semantic unit continued from the preceding batch."""
+
+    node_id: str
+    title: str
+    node_type: str
+    depth: int
+    proves_id: str | None = None
+    dependency_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class ReadBatchPayload:
-    """Response body for `read_batch` (raw context + metadata preview)."""
+    """Response body for `read_batch` (committable raw + read-only context)."""
 
     raw_content: str
     batch_line_count: int
+    raw_token_count: int
     current_tree: str
-    prior_clean_tail: str
+    prior_clean_context: str
+    next_raw_context: str
+    next_raw_context_line_count: int
+    next_raw_context_token_count: int
+    prior_continuation: PriorContinuationPayload | None
     known_ids: list[str]
     memory_text: str
 
@@ -30,6 +47,11 @@ class SubmitCleanResult:
     raw_context_around_cutoff: list[str] = field(default_factory=list)
     clean_tail: list[str] = field(default_factory=list)
     proposed_tree: str = ""
+    batch_line_count: int | None = None
+    rollback_lines: int = 0
+    next_raw_context_violation: bool = False
+    cutoff_kind: str | None = None
+    continuation_node_id: str | None = None
 
 
 @dataclass(slots=True)

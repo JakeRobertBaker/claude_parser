@@ -4,6 +4,8 @@ from typing import cast
 
 from claude_parser.application.batch_tools.service import BatchToolsService
 from claude_parser.application.tokens import approximate_claude_tokens
+from claude_parser.domain.annotation_parser import parse_annotations
+from claude_parser.domain.annotation_tree_builder import process_batch_annotations
 from claude_parser.domain.node import TreeDict
 from claude_parser.ports.state import BatchContext, StatePort
 
@@ -30,7 +32,14 @@ class _FakeState:
         _ = source_line
 
 
-def _build_context(raw_content: str, clean_token_target: int = 1) -> BatchContext:
+def _build_context(
+    raw_content: str,
+    clean_token_target: int = 1,
+    *,
+    next_raw_context: str = "",
+    prior_clean_context: str = "",
+    prior_continuation_node_id: str | None = None,
+) -> BatchContext:
     raw_line_count = len(raw_content.splitlines())
     return BatchContext(
         raw_content=raw_content,
@@ -38,7 +47,11 @@ def _build_context(raw_content: str, clean_token_target: int = 1) -> BatchContex
         raw_end_line=raw_line_count,
         raw_line_count=raw_line_count,
         raw_token_count=approximate_claude_tokens(raw_content),
-        prior_clean_tail="",
+        next_raw_context=next_raw_context,
+        next_raw_context_line_count=len(next_raw_context.splitlines()),
+        next_raw_context_token_count=approximate_claude_tokens(next_raw_context),
+        prior_clean_context=prior_clean_context,
+        prior_continuation_node_id=prior_continuation_node_id,
         memory_text="",
         clean_token_target=clean_token_target,
     )
@@ -52,7 +65,8 @@ def test_submit_clean_allows_tiny_final_batches() -> None:
     service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
 
     result = service.handle_submit_clean(
-        '@ - id="backmatter_footer"\n\nAMS on the Web www.ams.org\n'
+        '@ - id="backmatter_footer"\n\nAMS on the Web www.ams.org\n',
+        cutoff_kind="clean_boundary",
     )
 
     assert result.valid is True
@@ -83,8 +97,265 @@ def test_submit_clean_reports_confidence_and_cutoff_violations_separately() -> N
         + "\n"
     )
 
-    result = service.handle_submit_clean(cleaned_text)
+    result = service.handle_submit_clean(
+        cleaned_text, cutoff_kind="clean_boundary"
+    )
 
     assert result.valid is False
     assert any("Alignment confidence check failed" in e for e in result.errors)
     assert any("Cutoff position check failed" in e for e in result.errors)
+
+
+def test_submit_clean_validates_and_persists_explicit_continuation() -> None:
+    raw_content = "Definition alpha has two clauses.\n"
+    context = _build_context(
+        raw_content,
+        next_raw_context="The second clause continues here.\n",
+    )
+    state = _FakeState()
+    service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
+
+    cleaned_text = (
+        '@ - id="def_alpha" type="definition"\n\n'
+        "Definition alpha has two clauses.\n"
+    )
+    result = service.handle_submit_clean(
+        cleaned_text,
+        cutoff_kind="continuation",
+        continuation_node_id="def_alpha",
+    )
+
+    assert result.valid is True
+    assert result.continuation_node_id == "def_alpha"
+    assert service.handle_commit_batch().success is True
+    assert service.committed_continuation_node_id() == "def_alpha"
+
+
+def test_submit_clean_rejects_continuation_that_is_not_active_leaf() -> None:
+    raw_content = "Definition alpha has two clauses.\n"
+    context = _build_context(raw_content)
+    state = _FakeState()
+    service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
+
+    result = service.handle_submit_clean(
+        '@ - id="def_alpha" type="definition"\n\n'
+        "Definition alpha has two clauses.\n",
+        cutoff_kind="continuation",
+        continuation_node_id="wrong_node",
+    )
+
+    assert result.valid is False
+    assert any("active leaf" in error for error in result.errors)
+
+
+def test_read_batch_returns_structured_prior_continuation_only_when_declared() -> None:
+    state = _FakeState()
+    prior_clean = (
+        '@ - id="def_alpha" type="definition"\n\n'
+        "Definition alpha begins.\n"
+    )
+    process_batch_annotations(
+        parse_annotations(prior_clean),
+        state.tree_dict,
+        chunk_number=0,
+        total_content_lines=len(prior_clean.splitlines()),
+    )
+    context = _build_context(
+        "Definition alpha finishes.\n",
+        prior_continuation_node_id="def_alpha",
+    )
+    service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=1)
+
+    payload = service.build_read_batch_payload()
+
+    assert payload.prior_continuation is not None
+    assert payload.prior_continuation.node_id == "def_alpha"
+    assert payload.prior_continuation.node_type == "definition"
+    assert payload.prior_continuation.depth == 1
+
+
+def test_submit_clean_allows_persisted_prior_continuation() -> None:
+    state = _FakeState()
+    prior_clean = (
+        '@ - id="def_alpha" type="definition"\n\n'
+        "Definition alpha begins and remains unfinished.\n"
+    )
+    process_batch_annotations(
+        parse_annotations(prior_clean),
+        state.tree_dict,
+        chunk_number=0,
+        total_content_lines=len(prior_clean.splitlines()),
+    )
+    raw_content = (
+        "Its remaining clauses are alpha bravo charlie delta echo foxtrot golf hotel "
+        "india juliet kilo lima mike november oscar papa quebec romeo.\n"
+    )
+    context = _build_context(
+        raw_content,
+        next_raw_context="The same definition continues again.\n",
+        prior_continuation_node_id="def_alpha",
+    )
+    service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=1)
+
+    result = service.handle_submit_clean(
+        raw_content,
+        cutoff_kind="continuation",
+        continuation_node_id="def_alpha",
+    )
+
+    assert result.valid is True
+    assert result.continuation_node_id == "def_alpha"
+
+
+def test_submit_clean_rejects_text_copied_from_next_raw_context() -> None:
+    raw_content = (
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima "
+        "mike november oscar papa quebec romeo sierra tango uniform victor whiskey "
+        "xray yankee zulu.\n"
+    )
+    next_raw_context = (
+        "apricot banana cashew date elderberry fig grape hazelnut kiwi lemon mango "
+        "nectarine orange peach quince raspberry strawberry.\n"
+    )
+    context = _build_context(
+        raw_content,
+        next_raw_context=next_raw_context,
+    )
+    state = _FakeState()
+    service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
+
+    result = service.handle_submit_clean(
+        '@ - id="sec_alpha"\n\n' + raw_content + next_raw_context,
+        cutoff_kind="clean_boundary",
+    )
+
+    assert result.valid is False
+    assert result.next_raw_context_violation is True
+    assert any("read-only next_raw_context" in error for error in result.errors)
+    assert state.written_clean is None
+
+
+def test_submit_clean_allows_core_without_copying_next_raw_context() -> None:
+    raw_content = (
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima "
+        "mike november oscar papa quebec romeo sierra tango uniform victor whiskey "
+        "xray yankee zulu.\n"
+    )
+    context = _build_context(
+        raw_content,
+        next_raw_context="Following material belongs to the next batch only.\n",
+    )
+    state = _FakeState()
+    service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
+
+    result = service.handle_submit_clean(
+        '@ - id="sec_alpha"\n\n' + raw_content,
+        cutoff_kind="clean_boundary",
+    )
+
+    assert result.valid is True
+    assert result.inferred_cutoff_batch_line == 1
+    assert result.rollback_lines == 0
+    assert result.next_raw_context_violation is False
+
+
+def test_submit_clean_requires_rollback_before_trailing_semantic_unit() -> None:
+    opening = (
+        "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima "
+        "mike november oscar papa quebec romeo sierra tango uniform.\n"
+    )
+    trailing_definition = (
+        "# 0.42 Definition interval\n\n"
+        "* The first clause uses victor whiskey xray yankee zulu apricot banana.\n"
+    )
+    context = _build_context(
+        opening + trailing_definition,
+        next_raw_context=(
+            "* The second clause continues the same definition with cherry date fig.\n\n"
+            "# 0.43 Theorem description of intervals\n"
+        ),
+    )
+    state = _FakeState()
+    service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
+
+    rejected = service.handle_submit_clean(
+        '@ - id="sec_alpha"\n\n'
+        + opening
+        + '@ -- id="def_0_42" type="definition"\n\n'
+        + "The first clause uses victor whiskey xray yankee zulu apricot banana.\n",
+        cutoff_kind="clean_boundary",
+    )
+
+    assert rejected.valid is False
+    assert any("Semantic boundary check failed" in error for error in rejected.errors)
+    assert state.written_clean is None
+
+    accepted = service.handle_submit_clean(
+        '@ - id="sec_alpha"\n\n' + opening,
+        cutoff_kind="clean_boundary",
+    )
+
+    assert accepted.valid is True
+    assert accepted.inferred_cutoff_batch_line == 1
+    assert accepted.rollback_lines == 3
+
+
+def test_submit_clean_rejects_late_new_continuation() -> None:
+    opening = (
+        "Opening material alpha bravo charlie delta echo foxtrot golf hotel india "
+        "juliet kilo lima mike november oscar.\n"
+    )
+    late_definition = (
+        "Definition beta begins with papa quebec romeo sierra tango uniform victor "
+        "whiskey xray yankee zulu and remains unfinished.\n"
+    )
+    context = _build_context(
+        opening + late_definition,
+        next_raw_context="The definition beta finishes in the following batch.\n",
+    )
+    state = _FakeState()
+    service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
+
+    cleaned_text = (
+        '@ - id="sec_opening"\n\n'
+        + opening
+        + '@ -- id="def_beta" type="definition"\n\n'
+        + late_definition
+    )
+    result = service.handle_submit_clean(
+        cleaned_text,
+        cutoff_kind="continuation",
+        continuation_node_id="def_beta",
+    )
+
+    assert result.valid is False
+    assert any("opening annotation block" in error for error in result.errors)
+    assert state.written_clean is None
+
+
+def test_submit_clean_rejects_continuation_at_source_eof() -> None:
+    raw_content = (
+        "Definition alpha has clauses alpha bravo charlie delta echo foxtrot golf "
+        "hotel india juliet kilo lima mike november oscar papa quebec romeo.\n"
+    )
+    context = _build_context(raw_content)
+    state = _FakeState()
+    service = BatchToolsService(cast(StatePort, state))
+    service.begin_batch(context, state.known_ids, state.tree_dict, current_ordinal=0)
+
+    result = service.handle_submit_clean(
+        '@ - id="def_alpha" type="definition"\n\n' + raw_content,
+        cutoff_kind="continuation",
+        continuation_node_id="def_alpha",
+    )
+
+    assert result.valid is False
+    assert any("source EOF" in error for error in result.errors)

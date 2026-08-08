@@ -19,7 +19,8 @@ Adapters     — concrete implementations of ports (CLI, files, MCP transport, e
   - `parsing/service.py` owns the full run loop orchestration.
   - `batch_tools/` hosts `BatchToolsService` + alignment/tree preview helpers.
   - `serialization.py`, `prompt_builder.py`, and prompt templates are shared policies.
-- **Adapters** (`src/claude_parser/adapters/`): concrete infrastructure.
+- **Adapters** (`src/claude_parser/adapters/`): concrete infrastructure, including
+  interchangeable Claude CLI and Pi SDK agent adapters.
 - **CLI** (`src/claude_parser/cli.py`): composition root.
 
 Dependency arrows point inward:
@@ -55,7 +56,8 @@ cli -> adapters -> application -> ports -> domain
 
 `BatchMCPServer` is transport glue only:
 
-- exposes service tool specs/calls over SSE
+- exposes service tool specs/calls over MCP SSE for Claude CLI
+- exposes the same service over a localhost JSON endpoint for Pi custom tools
 - starts/stops server and writes `mcp_config.json`
 - delegates business semantics to `BatchToolsService`
 
@@ -63,15 +65,15 @@ cli -> adapters -> application -> ports -> domain
 
 ```
 CLI bootstraps adapters -> state.init() loads raw lines + saved snapshot/tree
-                        -> BatchMCPServer starts SSE transport
+                        -> BatchMCPServer starts local tool transports
                         -> ParsingService enters run loop
 
 Loop per batch:
-1. ParsingService plans batch via run_engine.plan_next(...)
-2. state.write_raw_batch(ordinal, raw_content)
+1. ParsingService plans committable raw plus bounded read-only following context via run_engine.plan_next(...)
+2. state writes `raw_content` and `next_raw_context` as separate artifacts
 3. ParsingService builds BatchContext from plan + state helpers
 4. batch_tools.begin_batch(...)
-5. Claude CLI runs with MCP config; Haiku calls read_batch/submit_clean/commit_batch
+5. Selected agent adapter calls read_batch/submit_clean/commit_batch
 6. ParsingService reads clean file, parses + validates annotations
 7. process_batch_annotations(...) mutates tree
 8. ParsingService clamps cutoff, advances snapshot, calls state.save_snapshot/state.save_tree/state.commit_all
@@ -83,9 +85,11 @@ After loop: state.read_all_clean_before_cutoff() -> state.write_final()
 
 `FilesystemStateStore` keeps everything inside `state_dir/`:
 
-- `raw/raw_{ordinal}.md` — raw slices sent to Haiku
+- `raw/raw_{ordinal}.md` — committable raw slices exposed to the batch agent
+- `raw/next_context_{ordinal}.md` — read-only raw context following each slice
 - `clean/clean_{ordinal}.md` — cleaned batches ending with `<!-- cutoff -->`
-- `logs/{chunk_id}.json` and `failures/{chunk_id}_raw_response.txt` — invocation outputs
+- `logs/{chunk_id}.json` and `failures/{chunk_id}_raw_response.txt` — invocation summaries/failures
+- `logs/pi/{chunk_id}/{attempt}/` — persistent Pi session, safe live events, and manifests
 - `tree.json` / `state.json` — serialized annotation tree + `RunSnapshot`
 - `memory.md` — optional memory context
 - `final.md` — concatenated clean output
@@ -95,7 +99,24 @@ After loop: state.read_all_clean_before_cutoff() -> state.write_final()
 `BatchToolsService` defines three tools:
 
 1. `read_batch()`
-2. `submit_clean(cleaned_text)`
-3. `commit_batch(cutoff_batch_line?)`
+2. `submit_clean(cleaned_text, cutoff_kind, continuation_node_id?)`
+3. `commit_batch()`
 
-The SSE adapter returns JSON payloads in MCP `TextContent`.
+The MCP SSE transport returns JSON payloads in MCP `TextContent`. The Pi transport
+returns the same payload dictionaries as JSON over localhost HTTP; Pi wraps them as
+native custom-tool results.
+
+`batch_tokens` defines the committable `raw_content` target. `read_batch` also
+supplies `prior_clean_context` and `next_raw_context`; both are explicitly
+read-only. The latter shows whether a unit at the end of `raw_content` continues,
+so the agent can roll back before that unit rather than guessing from a modulo
+batch boundary. The persistence adapter records these separately as
+`raw/raw_{ordinal}.md` and `raw/next_context_{ordinal}.md`.
+
+Progress advances only from a cutoff aligned within `raw_content`. Submit
+validation rejects detected material copied from `next_raw_context`. It also
+rejects a clean cutoff after a trailing semantic Markdown heading when the next
+context begins with more content under that heading. An explicit continuation
+node is persisted only for a prior continuation or an oversized unit introduced
+in the batch's opening annotation block; a later-starting unit must be rolled
+back. The rightmost tree trace alone is not evidence that a unit is unfinished.

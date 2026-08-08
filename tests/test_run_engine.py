@@ -12,16 +12,26 @@ def test_plan_next_computes_expected_batch_fields() -> None:
     snapshot = RunSnapshot(next_start_line=0, next_chunk_id=3, sections_completed=2)
     raw_lines = ["aa\n", "bbbb\n", "cc\n"]
 
-    plan = plan_next(snapshot, raw_lines, batch_tokens=5, token_counter=len)
+    plan = plan_next(
+        snapshot,
+        raw_lines,
+        batch_tokens=5,
+        next_raw_context_tokens=2,
+        token_counter=len,
+    )
 
     assert plan == BatchPlan(
         ordinal=3,
         chunk_id="chunk_003",
         start_line=0,
         end_line=2,
+        next_context_end_line=3,
         raw_content="aa\nbbbb\n",
+        next_raw_context="cc\n",
         raw_line_count=2,
         raw_token_count=8,
+        next_raw_context_line_count=1,
+        next_raw_context_token_count=3,
         clean_token_target=4,
     )
 
@@ -32,6 +42,7 @@ def test_plan_next_raises_when_no_raw_left() -> None:
             RunSnapshot(next_start_line=2, next_chunk_id=1, sections_completed=1),
             ["a\n", "b\n"],
             batch_tokens=10,
+            next_raw_context_tokens=2,
             token_counter=len,
         )
     except RuntimeError as exc:
@@ -45,27 +56,32 @@ def test_clamp_cutoff_respects_plan_bounds() -> None:
         ordinal=0,
         chunk_id="chunk_000",
         start_line=10,
-        end_line=20,
+        end_line=18,
+        next_context_end_line=20,
         raw_content="",
-        raw_line_count=10,
-        raw_token_count=100,
+        next_raw_context="",
+        raw_line_count=8,
+        raw_token_count=80,
+        next_raw_context_line_count=2,
+        next_raw_context_token_count=20,
         clean_token_target=50,
     )
 
     assert clamp_cutoff(plan, 5) == 11
     assert clamp_cutoff(plan, 15) == 15
-    assert clamp_cutoff(plan, 99) == 20
+    assert clamp_cutoff(plan, 99) == 18
 
 
 def test_advance_moves_snapshot_forward() -> None:
     snapshot = RunSnapshot(next_start_line=0, next_chunk_id=4, sections_completed=9)
 
-    updated = advance(snapshot, cutoff_line=123)
+    updated = advance(snapshot, cutoff_line=123, continuation_node_id="def_42")
 
     assert updated == RunSnapshot(
         next_start_line=123,
         next_chunk_id=5,
         sections_completed=10,
+        continuation_node_id="def_42",
     )
 
 

@@ -13,15 +13,19 @@ class ClaudeCLIAdapter:
     def invoke(
         self,
         prompt: str,
-        model: str,
+        model: str | None,
         allowed_tools: list[str],
         add_dirs: list[str],
         timeout: int,
+        invocation_id: str,
         mcp_config_path: str | None = None,
+        tool_endpoint: str | None = None,
     ) -> LLMResult:
+        _ = (tool_endpoint, invocation_id)
+        resolved_model = model or "haiku"
         cmd = [
             "claude", "-p", prompt,
-            "--model", model,
+            "--model", resolved_model,
             "--verbose",
             "--output-format", "stream-json",
         ]
@@ -50,7 +54,9 @@ class ClaudeCLIAdapter:
             for d in add_dirs:
                 cmd.extend(["--add-dir", d])
 
-        logger.debug("Invoking claude with model=%s, timeout=%d", model, timeout)
+        logger.debug(
+            "Invoking claude with model=%s, timeout=%d", resolved_model, timeout
+        )
 
         # Raise MCP output token limit so large read_batch results are not
         # persisted to disk and replaced with a 2KB preview. Default is 25000.

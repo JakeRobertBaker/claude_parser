@@ -19,9 +19,11 @@ class LLMPort(Protocol):
     def invoke(
         self,
         prompt: str,
-        model: str,
+        model: str | None,
         allowed_tools: list[str],
         add_dirs: list[str],
         timeout: int,
+        invocation_id: str,
         mcp_config_path: str | None = None,
+        tool_endpoint: str | None = None,
     ) -> LLMResult: ...

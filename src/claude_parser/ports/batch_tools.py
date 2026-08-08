@@ -1,4 +1,4 @@
-"""Protocol for MCP transport adapters (SSE, stdio, etc.)."""
+"""Protocol for batch-tool session and transport adapters."""
 
 from __future__ import annotations
 
@@ -25,8 +25,13 @@ class BatchToolsPort(Protocol):
 
     def committed_source_line(self) -> int | None: ...
 
+    def committed_continuation_node_id(self) -> str | None: ...
+
     @property
     def mcp_config_path(self) -> str: ...
+
+    @property
+    def tool_endpoint(self) -> str: ...
 
     def start(self) -> None: ...
 

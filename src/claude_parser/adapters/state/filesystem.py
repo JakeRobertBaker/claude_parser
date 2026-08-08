@@ -96,6 +96,7 @@ class FilesystemStateStore:
             next_start_line=data["next_start_line"],
             next_chunk_id=data["next_chunk_id"],
             sections_completed=data.get("sections_completed", 0),
+            continuation_node_id=data.get("continuation_node_id"),
         )
 
     def _load_saved_tree(self) -> None:
@@ -141,7 +142,7 @@ class FilesystemStateStore:
 
     # -- Context helpers --
 
-    def read_prior_clean_tail(self, ordinal: int, n_lines: int) -> str:
+    def read_prior_clean(self, ordinal: int) -> str:
         if ordinal == 0:
             return ""
         prev_path = self._clean_path(ordinal - 1)
@@ -154,8 +155,7 @@ class FilesystemStateStore:
             if "<!-- cutoff -->" in line:
                 cutoff_idx = i
                 break
-        context_start = max(0, cutoff_idx - n_lines)
-        return "".join(lines[context_start:cutoff_idx])
+        return "".join(lines[:cutoff_idx])
 
     def read_memory(self) -> str:
         if not os.path.exists(self._memory_path):
@@ -167,6 +167,11 @@ class FilesystemStateStore:
 
     def write_raw_batch(self, ordinal: int, content: str) -> None:
         path = os.path.join(self._raw_dir, f"raw_{ordinal}.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    def write_next_raw_context(self, ordinal: int, content: str) -> None:
+        path = os.path.join(self._raw_dir, f"next_context_{ordinal}.md")
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
 
@@ -228,6 +233,7 @@ class FilesystemStateStore:
             "next_start_line": self._snapshot.next_start_line,
             "next_chunk_id": self._snapshot.next_chunk_id,
             "sections_completed": self._snapshot.sections_completed,
+            "continuation_node_id": self._snapshot.continuation_node_id,
         }
         self._write_json(self._state_path, data)
 
