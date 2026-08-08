@@ -72,15 +72,21 @@ test("batch tools enforce ordering and retain safe outcome history", async (t) =
     calls.push(request);
     const result = request.name === "read_batch"
       ? {
-          raw_content: "sensitive raw markdown",
-          batch_line_count: 10,
-          raw_token_count: 100,
-          next_raw_context: "sensitive next context",
-          next_raw_context_line_count: 2,
-          next_raw_context_token_count: 20,
-          prior_clean_context: "sensitive prior context",
+          committable_raw: {
+            scope: "COMMITTABLE SOURCE",
+            content: "sensitive raw markdown",
+            line_count: 10,
+            token_count: 100,
+          },
+          read_only_context: {
+            scope: "READ-ONLY CONTEXT",
+            next_raw_content: "sensitive next context",
+            next_raw_line_count: 2,
+            next_raw_token_count: 20,
+            prior_clean_content: "sensitive prior context",
+            prior_continuation: null,
+          },
           known_ids: ["private_id"],
-          prior_continuation: null,
         }
       : request.name === "submit_clean"
         ? options.body.includes("invalid clean")
@@ -90,16 +96,27 @@ test("batch tools enforce ordering and retain safe outcome history", async (t) =
               warnings: ["Cleaned text is short."],
               inferred_cutoff_batch_line: 4,
             }
-          : { valid: true, errors: [], warnings: [] }
+          : {
+              valid: true,
+              commit_ready: false,
+              errors: [],
+              warnings: [],
+              tree_advisories: [{ code: "proof_should_be_statement_sibling" }],
+            }
         : request.name === "adjust_depths"
-          ? { valid: true, errors: [], warnings: [], applied_edits: request.arguments.edits }
+          ? { valid: true, commit_ready: true, errors: [], warnings: [], applied_edits: request.arguments.edits }
           : request.name === "inspect_tree"
             ? { ancestors: [], children: [], total_children: 0, next_child_offset: null }
             : { status: "ok" };
     return new Response(JSON.stringify(result));
   };
 
-  const workflow = { read: false, validSubmission: false, committed: false };
+  const workflow = {
+    read: false,
+    validSubmission: false,
+    commitReady: false,
+    committed: false,
+  };
   const observed = [];
   let nowMs = 0;
   const tools = buildTools(SPECS, "http://127.0.0.1/tools", workflow, {
@@ -130,6 +147,8 @@ test("batch tools enforce ordering and retain safe outcome history", async (t) =
     cleaned_text: "clean",
     cutoff_kind: "clean_boundary",
   });
+  const blockedCommit = await byName.commit_batch.execute("call-blocked", {});
+  assert.match(textPayload(blockedCommit).error, /commit_ready is false/);
   await byName.adjust_depths.execute("call-adjust", {
     edits: [{ node_id: "section_d", depth: 2 }],
   });
@@ -146,13 +165,15 @@ test("batch tools enforce ordering and retain safe outcome history", async (t) =
       ["inspect_tree", "ok"],
       ["submit_clean", "invalid"],
       ["submit_clean", "ok"],
+      ["commit_batch", "application_error"],
       ["adjust_depths", "ok"],
       ["commit_batch", "ok"],
     ],
   );
   assert.equal(observed[4].errorCount, 1);
   assert.equal(observed[4].warningCount, 1);
-  assert.equal(observed[6].appliedDepthEditCount, 1);
+  assert.equal(observed[5].treeAdvisoryCount, 1);
+  assert.equal(observed[7].appliedDepthEditCount, 1);
   assert.equal(observed[1].rawTokenCount, 100);
   assert.doesNotMatch(JSON.stringify(observed), /sensitive|private_id/);
   assert.deepEqual(calls.at(-1), { name: "commit_batch", arguments: {} });

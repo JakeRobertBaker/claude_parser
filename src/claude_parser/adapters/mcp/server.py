@@ -34,7 +34,7 @@ def _find_free_port() -> int:
 
 
 class BatchMCPServer(BatchToolsPort):
-    """Adapter that backs the BatchToolsPort via MCP SSE server."""
+    """Adapter exposing BatchToolsPort through MCP/SSE and local JSON."""
 
     def __init__(
         self,

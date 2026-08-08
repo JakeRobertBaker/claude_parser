@@ -63,9 +63,17 @@ def test_json_transport_lists_and_calls_batch_tools(tmp_path: Path) -> None:
         )
         with urlopen(request, timeout=2) as response:
             payload = json.load(response)
-        assert payload["raw_content"] == raw_content
-        assert payload["batch_line_count"] == 1
-        assert payload["prior_clean_context"] == "Prior clean context.\n"
-        assert payload["next_raw_context"] == "Following raw context.\n"
+        assert payload["committable_raw"]["content"] == raw_content
+        assert payload["committable_raw"]["line_count"] == 1
+        assert "COMMITTABLE SOURCE" in payload["committable_raw"]["scope"]
+        assert (
+            payload["read_only_context"]["prior_clean_content"]
+            == "Prior clean context.\n"
+        )
+        assert (
+            payload["read_only_context"]["next_raw_content"]
+            == "Following raw context.\n"
+        )
+        assert "READ-ONLY CONTEXT" in payload["read_only_context"]["scope"]
     finally:
         server.stop()

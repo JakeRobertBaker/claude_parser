@@ -43,19 +43,22 @@ Every Pi attempt receives a unique directory below
 agent so a running or failed attempt is easy to locate. By default each attempt
 contains:
 
-- Pi's native, incrementally persisted JSONL session with completed messages;
+- Pi's native, incrementally persisted JSONL session with completed messages
+  (sensitive: it contains source, cleaned text, tool results, and reasoning);
 - `events.jsonl`, a live content-safe timeline of lifecycle, tool status,
   usage/cost, errors, sanitized application outcomes, and throttled streaming
   character counts; and
 - `manifest.json`, which records status and artifact locations.
 
 The safe event stream does not contain message text, thinking, tool arguments,
-tool results, or raw/clean Markdown. `logs/chunk_NNN.json` remains the concise
-application-facing report and links these detailed artifacts. It also retains a
-`workflow.toolHistory` entry for every tool attempt. These summaries distinguish
-transport completion from application outcomes such as a duplicate read, invalid
-submission, or rejected commit, and include bounded validation messages and cutoff
-metrics without copying document content.
+full tool results, or raw/clean Markdown. It does contain deliberately bounded
+tool-outcome projections: status, counts, cutoff metrics, and sanitized validation
+messages. Source-heading titles remain in the native tool result for agent review
+but only their count enters the safe projection. `logs/chunk_NNN.json` remains the
+concise application-facing report and links these detailed artifacts. It also
+retains a `workflow.toolHistory` entry for every tool attempt. These summaries
+distinguish transport completion from application outcomes such as a duplicate
+read, invalid submission, or rejected commit.
 
 For unusual debugging, `--pi-debug-stream-log` adds `stream.jsonl` with every raw
 Pi stream event. This can contain the source Markdown, cleaned output, reasoning,
@@ -92,14 +95,15 @@ templates, themes, or `AGENTS.md` context. Its tool allowlist contains only the 
 batch tools, so Pi's `read`, `write`, `edit`, `bash`, `grep`, `find`, and `ls` tools
 are absent.
 
-The runner adds two workflow guards beyond the Python validation:
+The runner adds workflow guards beyond the Python validation:
 
 - tree inspection, submission, depth adjustment, and commit cannot run before `read_batch`.
 - `read_batch` returns the large batch payload only once per agent session.
 - `adjust_depths` operates only on a valid pending submission and can change only
   current-batch annotation hyphens.
-- `commit_batch` cannot run before the latest proposal is valid and cannot override the
-  service-inferred cutoff.
+- `commit_batch` cannot run until the latest proposal reports `commit_ready=true`
+  and cannot override the service-inferred cutoff. A valid proposal remains
+  uncommittable while required proof-placement advisories are unresolved.
 
 If the model stops before committing, the runner gives it at most two targeted
 follow-up turns. The parsing service still verifies that the batch was actually
@@ -141,8 +145,8 @@ For an inexpensive smoke test, add `--max-sections 1` and use a new state direct
 
 ## Batch boundary behavior
 
-`--batch-tokens` defines the committable `raw_content` work target. The planner
-also supplies a following `next_raw_context` controlled by
+`--batch-tokens` defines the `committable_raw.content` work target. The planner
+also supplies `read_only_context.next_raw_content` controlled by
 `--next-raw-context-tokens` (default 2000). This context is read-only: it lets the
 agent see that a definition, proof, list, or similar unit at the end of the batch
 continues, then roll back before that unit. Both prompt instructions and submit
@@ -156,7 +160,7 @@ continuation must name the proposed tree's active leaf; this ID is validated,
 saved in `state.json`, and returned as structured `prior_continuation` metadata in
 the next batch. New continuations are permitted only for an oversized unit opened
 at the start of a batch; a later unit crossing the boundary must be rolled back.
-Prior clean prose is supplied as read-only `prior_clean_context`, a whole-line
+Prior clean prose is supplied as `read_only_context.prior_clean_content`, a whole-line
 suffix bounded by `--prior-clean-context-tokens` (default 2000).
 
 ## Math and tree review
@@ -166,9 +170,23 @@ Math inside code spans and fences is ignored. Doubled alphabetic escapes such as
 `\\mathbf` are normalized to `\mathbf` and reported by location; unclosed math
 delimiters and remaining KaTeX parse failures reject the submission.
 
-`read_batch.tree_context` provides the major generic-container outline, complete
+`read_batch` nests source text beneath an explicitly labelled `committable_raw`
+object and boundary context beneath a separately labelled `read_only_context`
+object. `tree_context` provides the major generic-container outline, complete
 active trace, and local sibling windows with explicit omission counts. An agent can
 page through an older branch using `inspect_tree`. A valid `submit_clean` returns
 every node created by that batch with its annotation depth and resolved parent.
 The candidate remains in memory: `adjust_depths` can transactionally repair its
-current-batch hierarchy, and only `commit_batch` writes the reviewed clean file.
+current-batch hierarchy. `commit_ready` becomes true only after blocking tree
+advisories are resolved, and only `commit_batch` writes the reviewed clean file.
+Aligned invalid submissions still return committable/raw/read-only tail diagnostics,
+so the agent can remove only an offending preview-derived suffix. Tree review also
+reports proofs nested beneath their statements and likely unrepresented generic
+Markdown headings as structured advisories.
+
+Proof-placement advisories are blocking: `valid=true` may accompany
+`commit_ready=false`, and both the runner and Python service reject an early
+commit. Source-heading advisories are nonblocking because a source heading may be
+intentionally represented by another node; the prompt requires the agent to review
+and justify them. Heading coverage cannot detect a structural transition that has
+no Markdown heading, such as credits or licensing prose following a final exercise.

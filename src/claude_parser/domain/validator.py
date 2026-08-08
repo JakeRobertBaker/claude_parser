@@ -116,16 +116,19 @@ def validate_annotations(
             )
 
         if event.proves:
-            target_type = node_types.get(event.proves)
-            if target_type is None and event.proves in known:
-                pass
-            elif (
-                target_type is not None and target_type not in _PROVEABLE_TARGET_VALUES
-            ):
+            if event.proves in node_types:
+                target_type = node_types[event.proves]
+                if target_type not in _PROVEABLE_TARGET_VALUES:
+                    displayed_type = target_type or "generic"
+                    result.warnings.append(
+                        f"Line {event.line_number}: proves='{event.proves}' "
+                        f"targets type '{displayed_type}', expected one of "
+                        f"{sorted(_PROVEABLE_TARGET_VALUES)}"
+                    )
+            elif event.proves not in known:
                 result.warnings.append(
-                    f"Line {event.line_number}: proves='{event.proves}' "
-                    f"targets type '{target_type}', expected one of "
-                    f"{sorted(_PROVEABLE_TARGET_VALUES)}"
+                    f"Line {event.line_number}: proves target '{event.proves}' "
+                    f"on node '{event.id}' not found"
                 )
 
         all_known = seen_ids | known

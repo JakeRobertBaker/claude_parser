@@ -1,6 +1,7 @@
 # Annotation Schema
 
-Haiku cleans markdown and annotates it with text that defines a tree.
+The selected batch agent cleans markdown and annotates it with text that defines a
+tree.
 
 ## Basic Form
 ```
@@ -13,7 +14,7 @@ Theorem A Proof
 - title (optional)
 - type (optional; only for semantic math units, allowed values below)
 - proves (optional; id of the statement we are proving, only for type="proof")
-- deps (optional; comma separated list of prerequisite node ids)
+- deps (optional; JSON-style list of prerequisite node IDs)
 
 Valid types:
 definition, theorem, lemma, proposition, corollary, proof, remark, example, exercise, axiom
@@ -24,20 +25,34 @@ definition, theorem, lemma, proposition, corollary, proof, remark, example, exer
 - IDs must be globally unique across all batches. Never reuse IDs from `known_ids` in `read_batch` response.
 - Containers such as chapters, sections, and subsections have no `type`.
 - Use `type` only when the node’s text span is itself a semantic object such as a theorem, lemma, remark, or proof. For example, a theorem statement has `type="theorem"`, but a subsection named after the theorem is still a container; related discussion should be represented as separate child nodes.
-- Proofs are separate nodes with `type="proof"` and `proves="<id>"`.
+- Proofs are separate sibling nodes at the same depth as the statement, with
+  `type="proof"` and `proves="<id>"`. The `proves` relation links them; do not
+  nest a proof beneath its statement.
+- A statement targeted by `proves` must use one of the proveable semantic types:
+  theorem, lemma, proposition, or corollary. It must not remain generic.
 - Use `deps=[...]` only for real prerequisite nodes that the proof cites or that are needed to understand the material.
-- `title` is optional. Include it only when it helps rendering or navigation.
+- `title` is optional. Include it only when a source-derived title helps rendering
+  or navigation; do not invent source headings.
 
-## Validator
-Outputs a warning if any of these happen, there may be very rare permissible cases.
+## Validation and tree review
 
-- If non proof node has `proves`.
-- If proof node does not have `proves` value.
-- If `proves` points towards type other than (theorem|lemma|proposition|corollary).
-- If `dependencies` points to node if that does note exist.
+Annotation validation emits warnings for semantic issues that may have rare
+permissible cases, including:
 
-Outputs an error if any of are violated:
-- Unique ids
+- a non-proof node with `proves`;
+- a proof node without `proves`;
+- `proves` targeting anything other than theorem, lemma, proposition, or
+  corollary; and
+- `deps` or `proves` referring to an unknown node.
+
+Annotation validation emits blocking errors for duplicate IDs, content before the
+first header of a new tree, and a typed node that accidentally escapes an
+immediately preceding empty generic container.
+
+Proposed-tree review separately detects a proof nested beneath its statement. The
+submission may still have `valid=true`, but it reports `commit_ready=false` until
+the proof is moved to the statement's depth with `adjust_depths`. Likely omitted
+generic source headings are returned as nonblocking advisories for agent review.
 
 ## Example:
 raw

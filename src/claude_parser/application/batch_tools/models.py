@@ -19,20 +19,36 @@ class PriorContinuationPayload:
 
 
 @dataclass(slots=True)
+class CommittableRawPayload:
+    """The only source text permitted in a clean submission."""
+
+    scope: str
+    content: str
+    line_count: int
+    token_count: int
+
+
+@dataclass(slots=True)
+class ReadOnlyContextPayload:
+    """Boundary context that must never be copied into a submission."""
+
+    scope: str
+    prior_clean_content: str
+    next_raw_content: str
+    next_raw_line_count: int
+    next_raw_token_count: int
+    prior_continuation: PriorContinuationPayload | None
+    memory_text: str
+
+
+@dataclass(slots=True)
 class ReadBatchPayload:
     """Response body for `read_batch` (committable raw + read-only context)."""
 
-    raw_content: str
-    batch_line_count: int
-    raw_token_count: int
+    committable_raw: CommittableRawPayload
     tree_context: dict[str, Any]
-    prior_clean_context: str
-    next_raw_context: str
-    next_raw_context_line_count: int
-    next_raw_context_token_count: int
-    prior_continuation: PriorContinuationPayload | None
     known_ids: list[str]
-    memory_text: str
+    read_only_context: ReadOnlyContextPayload
 
 
 @dataclass(slots=True)
@@ -40,14 +56,19 @@ class SubmitCleanResult:
     """Validation + alignment result produced by `submit_clean`."""
 
     valid: bool
+    commit_ready: bool = False
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     inferred_cutoff_batch_line: int | None = None
     match_confidence: float | None = None
-    raw_context_around_cutoff: list[str] = field(default_factory=list)
-    clean_tail: list[str] = field(default_factory=list)
+    committable_raw_context_around_cutoff: list[str] = field(default_factory=list)
+    submitted_clean_tail: list[str] = field(default_factory=list)
+    committable_raw_tail: list[str] = field(default_factory=list)
+    read_only_next_raw_head: list[str] = field(default_factory=list)
     proposed_tree: dict[str, Any] = field(default_factory=dict)
     math_validation: dict[str, Any] = field(default_factory=dict)
+    tree_advisories: list[dict[str, Any]] = field(default_factory=list)
+    source_heading_advisories: list[dict[str, Any]] = field(default_factory=list)
     batch_line_count: int | None = None
     rollback_lines: int = 0
     next_raw_context_violation: bool = False
@@ -68,11 +89,14 @@ class AdjustDepthsResult:
     """Result of transactionally changing current-batch annotation depths."""
 
     valid: bool
+    commit_ready: bool = False
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     applied_edits: list[dict[str, int | str]] = field(default_factory=list)
     proposed_tree: dict[str, Any] = field(default_factory=dict)
     math_validation: dict[str, Any] = field(default_factory=dict)
+    tree_advisories: list[dict[str, Any]] = field(default_factory=list)
+    source_heading_advisories: list[dict[str, Any]] = field(default_factory=list)
 
 
 JSONLike = dict[str, Any]

@@ -11,14 +11,17 @@ You clean raw OCR markdown and annotate tree structure with the schema below.
 Execute the workflow now. Do not ask for confirmation.
 
 ## Workflow
-1. Call `read_batch`.
+1. Call `read_batch` exactly once. Its complete result remains in this conversation;
+   never call it again during this batch.
 2. Clean and annotate with `@ -` depth headers.
 3. Call `submit_clean` with cleaned content up to cutoff and declare `cutoff_kind`.
 4. If invalid, fix and resubmit.
-5. Compare `raw_context_around_cutoff` against `clean_tail`.
+5. Compare `committable_raw_context_around_cutoff`, `committable_raw_tail`,
+   `read_only_next_raw_head`, and `submitted_clean_tail`.
 6. Inspect every `proposed_tree.batch_nodes` entry, especially `parent_id`.
 7. If only tree depths are wrong, call `adjust_depths`; inspect its updated tree.
-8. Call `commit_batch` with no arguments to approve and persist the proposal.
+8. Proceed only when `commit_ready=true`, then call `commit_batch` with no arguments
+   to approve and persist the proposal.
 
 ## Cleaning
 - Fix OCR and markdown issues (broken LaTeX, headers/footers, watermark noise, bad joins, redundant blank lines).
@@ -42,38 +45,53 @@ Rules:
 - `title` is optional; include only when title (header, subheader, single bold text line, etc...) text is in the source.
 - `type` is optional and only for semantic units: definition, theorem, lemma, proposition, corollary, proof, remark, example, exercise, axiom.
 - Containers (book/chapter/section/subsection) have no `type`.
-- Proofs are separate nodes with `type="proof"` and `proves="<id>"`.
+- Proofs are separate sibling nodes at the same annotation depth as the statement,
+  with `type="proof"` and `proves="<id>"`. Do not nest a proof under its statement.
 - This includes proofs whose source begins inline with `Proof` rather than with a Markdown heading.
+- A statement that has a proof must use a proveable semantic type (`theorem`,
+  `lemma`, `proposition`, or `corollary`), never the generic container type.
 - `deps=["id1","id2"]` only for real prerequisites.
 
 ## Cross-batch continuation
 - `read_batch.tree_context` shows the major outline, complete active trace, and
   local append neighborhoods. Omission counts are explicit.
 - Use `inspect_tree` only when an older omitted branch is relevant.
-- `read_batch.prior_continuation` is non-null only when the preceding batch explicitly ended inside that node.
+- `read_batch.read_only_context.prior_continuation` is non-null only when the preceding batch explicitly ended inside that node.
 - When it is non-null, continue its prose without repeating its annotation header or ID.
 - When it is null, do not treat the rightmost tree leaf as unfinished and do not emit leading unannotated continuation prose.
 - A continuation is allowed only for `prior_continuation` or for a genuinely oversized unit introduced in the opening annotation block of this batch.
-- If a later-starting unit crosses the end of `raw_content`, roll back before it. Do not declare it as a continuation.
+- If a later-starting unit crosses the end of `committable_raw.content`, roll back before it. Do not declare it as a continuation.
 - For an allowed oversized unit, submit with `cutoff_kind="continuation"` and set `continuation_node_id` to the proposed tree's active leaf.
 - At a complete semantic boundary, submit with `cutoff_kind="clean_boundary"` and omit `continuation_node_id`.
 
 ## Cutoff guidance
-- `raw_content` is the only committable source. Clean and annotate only material from this field.
-- `prior_clean_context` and `next_raw_context` are read-only context. Never reproduce text from either field in `cleaned_text`.
-- Use `next_raw_context` to determine whether a definition, theorem, proof, list item, exercise, or comparable unit at the end of `raw_content` continues beyond the batch.
-- If it continues, roll back and stop before that unit begins. The next batch will receive the complete unit as `raw_content`.
-- `submit_clean` enforces this for a trailing definition/theorem/proof/etc. Markdown heading whose content visibly continues into `next_raw_context`.
-- Prefer the latest complete semantic boundary within `raw_content`.
+- `committable_raw.content` is the only committable source. Its enclosing object is
+  explicitly labelled `COMMITTABLE SOURCE`.
+- The separately nested `read_only_context` object is explicitly labelled
+  `READ-ONLY CONTEXT`. Never reproduce `prior_clean_content`, `next_raw_content`,
+  or `memory_text` from that object in `cleaned_text`.
+- Use `read_only_context.next_raw_content` only to determine whether a definition,
+  theorem, proof, list item, exercise, or comparable unit at the end of the
+  committable content continues beyond the batch.
+- If it continues, roll back and stop before that unit begins. A later batch will
+  receive the complete unit as committable content.
+- Prefer the latest complete semantic boundary within `committable_raw.content`.
 Use `inferred_cutoff_batch_line` and `match_confidence` from `submit_clean` to verify alignment.
 
 ## Tree review
 - `proposed_tree.batch_nodes` contains every node created by this submission and
   shows both its annotation depth and resolved parent.
 - Check section/subsection relationships as well as theorem/definition placement.
+- Treat `tree_advisories` as required review work. In particular, make each proof
+  a sibling of the statement it proves using the suggested depth.
+- `commit_ready=false` on an otherwise valid submission means a required tree edit
+  remains; `commit_batch` will reject it until the advisory is resolved.
+- Review every `source_heading_advisories` item. Add a generic container node when
+  the source heading is structurally meaningful; leave it unresolved only when the
+  heading is intentionally represented another way.
 - `adjust_depths` can change only the number of annotation hyphens for nodes in
   this pending batch. It cannot rewrite prose or prior batches.
 - A failed depth edit must be corrected before commit.
 
-Begin by calling `read_batch`.
+Begin by calling `read_batch` once.
 """

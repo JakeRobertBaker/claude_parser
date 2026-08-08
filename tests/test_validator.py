@@ -47,6 +47,16 @@ class TestProvesWarnings:
         result = validate_annotations(events)
         assert any("targets type 'remark'" in w for w in result.warnings)
 
+    def test_proves_generic_target_warns(self):
+        events = [
+            _header(1, "generic_result"),
+            _header(2, "proof", node_type="proof", proves="generic_result"),
+        ]
+
+        result = validate_annotations(events)
+
+        assert any("targets type 'generic'" in warning for warning in result.warnings)
+
 
 class TestDepsWarnings:
     def test_missing_dep_warns(self):

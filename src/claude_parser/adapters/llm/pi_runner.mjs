@@ -15,6 +15,7 @@ import {
 
 const SYSTEM_PROMPT = `You are a single-purpose markdown cleaning task agent.
 Use the provided batch tools to read, clean, validate, and commit exactly one batch.
+Call read_batch exactly once; its result remains available in the conversation.
 Do not merely describe work. Finish by successfully calling commit_batch.
 You have no filesystem, shell, coding, skill, or extension capabilities.`;
 
@@ -26,6 +27,7 @@ const EMPTY_PARAMETERS = {
 
 const CUTOFF_FIELDS = [
   "valid",
+  "commit_ready",
   "inferred_cutoff_batch_line",
   "match_confidence",
   "batch_line_count",
@@ -104,17 +106,19 @@ function toolResultSummary(toolName, toolCallId, result, durationMs) {
   };
 
   if (toolName === "read_batch" && outcome === "ok") {
+    const committable = result.committable_raw ?? {};
+    const readOnly = result.read_only_context ?? {};
     return {
       ...summary,
-      batchLineCount: result.batch_line_count,
-      rawTokenCount: result.raw_token_count,
-      nextRawContextLineCount: result.next_raw_context_line_count,
-      nextRawContextTokenCount: result.next_raw_context_token_count,
-      priorCleanContextCharacters: typeof result.prior_clean_context === "string"
-        ? result.prior_clean_context.length
+      batchLineCount: committable.line_count,
+      rawTokenCount: committable.token_count,
+      nextRawContextLineCount: readOnly.next_raw_line_count,
+      nextRawContextTokenCount: readOnly.next_raw_token_count,
+      priorCleanContextCharacters: typeof readOnly.prior_clean_content === "string"
+        ? readOnly.prior_clean_content.length
         : 0,
       knownIdCount: Array.isArray(result.known_ids) ? result.known_ids.length : 0,
-      hasPriorContinuation: result.prior_continuation != null,
+      hasPriorContinuation: readOnly.prior_continuation != null,
       treeNodeCount: result.tree_context?.node_count ?? 0,
     };
   }
@@ -142,6 +146,8 @@ function toolResultSummary(toolName, toolCallId, result, durationMs) {
       mathErrorCount: result?.math_validation?.errors?.length ?? 0,
       proposedNodeCount: result?.proposed_tree?.batch_nodes?.length ?? 0,
       appliedDepthEditCount: result?.applied_edits?.length ?? 0,
+      treeAdvisoryCount: result?.tree_advisories?.length ?? 0,
+      sourceHeadingAdvisoryCount: result?.source_heading_advisories?.length ?? 0,
     };
   }
   return {
@@ -201,7 +207,7 @@ export function buildTools(specs, endpoint, workflow, options = {}) {
           if (spec.name === "read_batch" && workflow.read) {
             return finish({
               status: "error",
-              error: "read_batch was already called. Use the batch content already present in this conversation.",
+              error: "read_batch is single-use and was already called. Its complete result remains in this conversation; continue from it without calling again.",
             });
           }
           if (spec.name !== "read_batch" && !workflow.read) {
@@ -210,10 +216,10 @@ export function buildTools(specs, endpoint, workflow, options = {}) {
               error: "Call read_batch before using other tools.",
             });
           }
-          if (spec.name === "commit_batch" && !workflow.validSubmission) {
+          if (spec.name === "commit_batch" && !workflow.commitReady) {
             return finish({
               status: "error",
-              error: "Call submit_clean until valid=true before commit_batch.",
+              error: "commit_ready is false. Resolve validation and tree_advisories before commit_batch.",
             });
           }
 
@@ -227,10 +233,12 @@ export function buildTools(specs, endpoint, workflow, options = {}) {
           if (spec.name === "read_batch") workflow.read = true;
           if (spec.name === "submit_clean") {
             workflow.validSubmission = result.valid === true;
+            workflow.commitReady = result.commit_ready === true;
             workflow.submission = cutoffSummary(result);
           }
           if (spec.name === "adjust_depths") {
             workflow.validSubmission = result.valid === true;
+            workflow.commitReady = result.commit_ready === true;
           }
           if (spec.name === "commit_batch") workflow.committed = result.status === "ok";
 
@@ -472,6 +480,7 @@ async function main() {
     const workflow = {
       read: false,
       validSubmission: false,
+      commitReady: false,
       committed: false,
       submission: null,
       toolHistory: [],
@@ -519,7 +528,7 @@ async function main() {
     // Give a model that stopped early two bounded opportunities to finish the
     // protocol. The Python service remains the authority on actual success.
     for (let attempt = 0; attempt < 2 && !workflow.committed; attempt += 1) {
-      const reminder = workflow.validSubmission
+      const reminder = workflow.commitReady
         ? "The cleaned batch is valid but not committed. Call commit_batch now."
         : workflow.read
           ? "The batch is not committed. Complete submit_clean or adjust_depths validation, review proposed parents, then call commit_batch."

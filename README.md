@@ -1,6 +1,9 @@
 # Claude Parser
 
-Parses raw markdown into a validated annotation tree using a batch MCP workflow.
+Turns messy OCR-derived mathematics Markdown into cleaned Markdown plus a validated
+annotation tree. Agents work through a restricted batch-tool protocol; the Claude
+CLI uses MCP/SSE and the Pi SDK adapter uses the same application semantics over a
+localhost JSON bridge.
 
 ## Architecture Snapshot
 
@@ -9,23 +12,46 @@ Parses raw markdown into a validated annotation tree using a batch MCP workflow.
 - `run_engine.py` exposes pure planning/advancement functions.
 - `FilesystemStateStore` is persistence-focused (raw/clean/state/tree/log artifacts).
 - `BatchToolsService` owns batch reading, validation, tree review/depth edits, and commit semantics.
-- Authoritative annotation schema lives in `@docs/annotation_schema.txt` (runtime condensed copy: `src/claude_parser/application/prompt_templates.py`).
-- Detailed architecture and end-to-end run flow: `@docs/architecture.md`.
+- The authoritative annotation schema is
+  [`docs/annotation_schema.txt`](docs/annotation_schema.txt); its condensed runtime
+  form is in
+  [`prompt_templates.py`](src/claude_parser/application/prompt_templates.py).
+- See [`docs/architecture.md`](docs/architecture.md) for the detailed architecture
+  and end-to-end run flow.
 
-## Commands
+## Requirements and verification
+
+- Python 3.14 or newer
+- Node.js 22.19 or newer
+- [`uv`](https://docs.astral.sh/uv/)
 
 ```bash
-# Install the Pi SDK and KaTeX validator used by every adapter
+# Install Python and JavaScript dependencies
+uv sync
 npm install
 
-# Unit Tests
+# Python tests
 uv run python -m pytest tests/
 
-# Ruff - linting
-uv run ruff check src/ tests/
+# Pi runner tests
+npm run test:pi
 
-# ty - type checking
+# Lint and type checking
+uv run ruff check src/ tests/
 uv run ty check src/ tests/
+```
+
+## Running the parser
+
+Always use a new state directory for a new run. A successful run writes raw and
+clean batch artifacts, logs, `state.json`, `tree.json`, and the merged `final.md`
+inside that directory. Resume an interrupted run by supplying the same directory
+with `--resume`.
+
+```bash
+uv run python -m claude_parser.cli \
+  --raw path/to/raw.md \
+  --state path/to/new_state_directory
 ```
 
 ## Pi SDK adapter
@@ -42,11 +68,13 @@ uv run python -m claude_parser.cli \
   --task-model openrouter/anthropic/your-model
 ```
 
-Omit `--task-model` to use Pi's configured default. The Pi agent is intentionally
+Model selectors accept Pi thinking suffixes, for example
+`openrouter/deepseek/deepseek-v4-flash:high`. Omit `--task-model` to use Pi's
+configured default. The Pi agent is intentionally
 given only the batch read, tree inspection, clean submission, depth adjustment,
 and commit tools; built-in filesystem and shell tools, extensions, skills, prompt
-templates, and ambient context files are not loaded. See `docs/pi_adapter.md` for
-the design and operational details.
+templates, and ambient context files are not loaded. See
+[`docs/pi_adapter.md`](docs/pi_adapter.md) for design and operational details.
 
 Every adapter validates submitted math with KaTeX. The validator automatically
 repairs doubled alphabetic command escapes inside math, reports those corrections,
@@ -57,3 +85,10 @@ state directory's `logs/pi/` tree. `--pi-debug-stream-log` additionally records
 the full sensitive stream when needed. Each batch includes 2,000-token read-only
 contexts on both sides by default; tune them with
 `--prior-clean-context-tokens` and `--next-raw-context-tokens`.
+
+## Documentation status
+
+`README.md`, `AGENTS.md`, and files under `docs/` are the maintained operational
+documentation. Files under `plan/`, `rough_notes/`, and `scratch/` are historical
+design notes or captured examples and are not normative descriptions of the
+current implementation.

@@ -186,10 +186,11 @@ def test_read_batch_returns_structured_prior_continuation_only_when_declared() -
 
     payload = service.build_read_batch_payload()
 
-    assert payload.prior_continuation is not None
-    assert payload.prior_continuation.node_id == "def_alpha"
-    assert payload.prior_continuation.node_type == "definition"
-    assert payload.prior_continuation.depth == 1
+    continuation = payload.read_only_context.prior_continuation
+    assert continuation is not None
+    assert continuation.node_id == "def_alpha"
+    assert continuation.node_type == "definition"
+    assert continuation.depth == 1
 
 
 def test_submit_clean_allows_persisted_prior_continuation() -> None:
@@ -251,7 +252,11 @@ def test_submit_clean_rejects_text_copied_from_next_raw_context() -> None:
 
     assert result.valid is False
     assert result.next_raw_context_violation is True
-    assert any("read-only next_raw_context" in error for error in result.errors)
+    assert any("read_only_context.next_raw_content" in error for error in result.errors)
+    assert result.committable_raw_tail
+    assert result.read_only_next_raw_head
+    assert result.submitted_clean_tail
+    assert "apricot banana" in " ".join(result.read_only_next_raw_head)
     assert state.written_clean is None
 
 
@@ -438,6 +443,7 @@ def test_adjust_depths_previews_and_persists_only_reviewed_candidate() -> None:
     )
 
     assert submitted.valid
+    assert submitted.commit_ready
     submitted_nodes = {
         item["id"]: item for item in submitted.proposed_tree["batch_nodes"]
     }
@@ -459,3 +465,53 @@ def test_adjust_depths_previews_and_persists_only_reviewed_candidate() -> None:
     assert state.written_clean is not None
     assert '@ -- id="sec_d"' in state.written_clean
     assert '@ --- id="sec_d"' not in state.written_clean
+
+
+def test_proof_placement_advisory_is_resolved_by_depth_edit() -> None:
+    raw_content = "Book.\nTheorem statement.\nProof text.\n"
+    cleaned_text = (
+        '@ - id="book"\nBook.\n'
+        '@ -- id="thm_1" type="theorem"\nTheorem statement.\n'
+        '@ --- id="proof_1" type="proof" proves="thm_1"\nProof text.\n'
+    )
+    state = _FakeState()
+    service = _make_service(state)
+    service.begin_batch(
+        _build_context(raw_content),
+        state.known_ids,
+        state.tree_dict,
+        current_ordinal=0,
+    )
+
+    submitted = service.handle_submit_clean(
+        cleaned_text, cutoff_kind="clean_boundary"
+    )
+
+    assert submitted.valid
+    assert not submitted.commit_ready
+    assert submitted.tree_advisories == [
+        {
+            "code": "proof_should_be_statement_sibling",
+            "node_id": "proof_1",
+            "target_id": "thm_1",
+            "current_parent_id": "thm_1",
+            "expected_parent_id": "book",
+            "suggested_depth": 2,
+        }
+    ]
+    blocked_commit = service.handle_commit_batch()
+    assert not blocked_commit.success
+    assert "Tree review is unresolved" in (blocked_commit.error or "")
+
+    adjusted = service.handle_adjust_depths([{"node_id": "proof_1", "depth": 2}])
+
+    assert adjusted.valid
+    assert adjusted.commit_ready
+    assert adjusted.tree_advisories == []
+    proof = next(
+        item
+        for item in adjusted.proposed_tree["batch_nodes"]
+        if item["id"] == "proof_1"
+    )
+    assert proof["parent_id"] == "book"
+    assert service.handle_commit_batch().success

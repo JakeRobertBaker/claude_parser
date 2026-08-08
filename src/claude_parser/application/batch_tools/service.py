@@ -8,11 +8,16 @@ from dataclasses import asdict
 from typing import Any
 
 from claude_parser.application.batch_tools.cutoff_alignment import infer_cutoff_line
+from claude_parser.application.batch_tools.heading_coverage import (
+    source_heading_advisories,
+)
 from claude_parser.application.batch_tools.models import (
     AdjustDepthsResult,
+    CommittableRawPayload,
     CommitResult,
     PriorContinuationPayload,
     ReadBatchPayload,
+    ReadOnlyContextPayload,
     SubmitCleanResult,
 )
 from claude_parser.application.batch_tools.semantic_boundary import (
@@ -130,17 +135,29 @@ class BatchToolsService:
     def build_read_batch_payload(self) -> ReadBatchPayload:
         context = self._require_context()
         return ReadBatchPayload(
-            raw_content=context.raw_content,
-            batch_line_count=context.raw_line_count,
-            raw_token_count=context.raw_token_count,
+            committable_raw=CommittableRawPayload(
+                scope=(
+                    "COMMITTABLE SOURCE: cleaned_text may contain material only "
+                    "from content in this object."
+                ),
+                content=context.raw_content,
+                line_count=context.raw_line_count,
+                token_count=context.raw_token_count,
+            ),
             tree_context=tree_context(self._tree_dict),
-            prior_clean_context=context.prior_clean_context,
-            next_raw_context=context.next_raw_context,
-            next_raw_context_line_count=context.next_raw_context_line_count,
-            next_raw_context_token_count=context.next_raw_context_token_count,
-            prior_continuation=self._prior_continuation_payload(context),
             known_ids=self._known_ids,
-            memory_text=context.memory_text,
+            read_only_context=ReadOnlyContextPayload(
+                scope=(
+                    "READ-ONLY CONTEXT: use this only to understand boundaries; "
+                    "never reproduce its content in cleaned_text."
+                ),
+                prior_clean_content=context.prior_clean_context,
+                next_raw_content=context.next_raw_context,
+                next_raw_line_count=context.next_raw_context_line_count,
+                next_raw_token_count=context.next_raw_context_token_count,
+                prior_continuation=self._prior_continuation_payload(context),
+                memory_text=context.memory_text,
+            ),
         )
 
     def handle_submit_clean(
@@ -264,6 +281,29 @@ class BatchToolsService:
         confidence = alignment.confidence
         next_raw_context_violation = False
 
+        committable_raw_context = raw_lines[
+            max(0, cutoff_line - 5) : min(len(raw_lines), cutoff_line + 2)
+        ]
+        submitted_lines = cleaned_text.splitlines()
+        submitted_clean_tail = (
+            submitted_lines[-8:] if len(submitted_lines) >= 8 else submitted_lines
+        )
+        committable_raw_tail = raw_lines[-8:]
+        read_only_next_raw_head = next_context_lines[:8]
+        committable_raw_context_lines = [
+            line.rstrip("\n") for line in committable_raw_context
+        ]
+        committable_raw_tail_lines = [
+            line.rstrip("\n") for line in committable_raw_tail
+        ]
+        read_only_next_raw_head_lines = [
+            line.rstrip("\n") for line in read_only_next_raw_head
+        ]
+
+        heading_advisories = source_heading_advisories(
+            raw_lines, cutoff_line, events
+        )
+
         if next_context_lines:
             combined_alignment = infer_cutoff_line(
                 cleaned_text, [*raw_lines, *next_context_lines]
@@ -278,7 +318,10 @@ class BatchToolsService:
             if next_raw_context_violation:
                 errors.append(
                     "Next raw context check failed: cleaned_text contains material "
-                    "from read-only next_raw_context. Roll back within raw_content."
+                    "from read_only_context.next_raw_content. Remove everything "
+                    "after the last committable source material. Compare "
+                    "submitted_clean_tail with committable_raw_tail and "
+                    "read_only_next_raw_head returned in this response."
                 )
         min_cutoff_tokens = max(
             1,
@@ -325,9 +368,10 @@ class BatchToolsService:
             and cutoff_line >= incomplete_unit_start
         ):
             errors.append(
-                "Semantic boundary check failed: next_raw_context continues the "
-                "semantic unit starting at raw_content line %d. Roll back before "
-                "that heading, or use an allowed opening-unit continuation."
+                "Semantic boundary check failed: read_only_context.next_raw_content "
+                "continues the semantic unit starting at committable raw line %d. "
+                "Roll back before that heading, or use an allowed opening-unit "
+                "continuation."
                 % incomplete_unit_start
             )
 
@@ -341,23 +385,32 @@ class BatchToolsService:
                 cutoff_kind=cutoff_kind,
                 continuation_node_id=continuation_node_id,
                 math_validation=math_payload,
+                source_heading_advisories=heading_advisories,
+                committable_raw_context=committable_raw_context_lines,
+                submitted_clean_tail=submitted_clean_tail,
+                committable_raw_tail=committable_raw_tail_lines,
+                read_only_next_raw_head=read_only_next_raw_head_lines,
             )
 
         if cleaned_text and not cleaned_text.endswith("\n"):
             cleaned_text += "\n"
 
-        raw_context = raw_lines[
-            max(0, cutoff_line - 5) : min(len(raw_lines), cutoff_line + 2)
-        ]
-        cleaned_lines = cleaned_text.splitlines()
-        clean_tail = cleaned_lines[-5:] if len(cleaned_lines) >= 5 else cleaned_lines
-
         proposed_tree_payload: dict[str, Any] = {}
+        tree_advisories: list[dict[str, Any]] = []
         proposed_tree_dict: TreeDict | None = None
         try:
             proposed_tree_dict = self._build_proposed_tree(events, cleaned_text)
             proposed_tree_payload = proposed_tree(
                 self._tree_dict, proposed_tree_dict, events
+            )
+            tree_advisories = self._proof_placement_advisories(
+                proposed_tree_dict, events
+            )
+            warnings.extend(
+                "Tree review: proof '%s' should be a sibling of '%s'; use "
+                "annotation depth %s."
+                % (item["node_id"], item["target_id"], item["suggested_depth"])
+                for item in tree_advisories
             )
         except (ValueError, KeyError) as exc:
             logger.warning("proposed_tree failed: %s", exc)
@@ -398,13 +451,17 @@ class BatchToolsService:
             warnings,
             cutoff_line=cutoff_line,
             confidence=confidence,
-            raw_context=[line.rstrip("\n") for line in raw_context],
-            clean_tail=clean_tail,
             proposed_tree=proposed_tree_payload,
             math_validation=math_payload,
+            tree_advisories=tree_advisories,
+            source_heading_advisories=heading_advisories,
             cutoff_kind=cutoff_kind,
             continuation_node_id=continuation_node_id,
             next_raw_context_violation=next_raw_context_violation,
+            committable_raw_context=committable_raw_context_lines,
+            submitted_clean_tail=submitted_clean_tail,
+            committable_raw_tail=committable_raw_tail_lines,
+            read_only_next_raw_head=read_only_next_raw_head_lines,
         )
 
     def _finalize_submit(
@@ -414,10 +471,14 @@ class BatchToolsService:
         *,
         cutoff_line: int | None = None,
         confidence: float | None = None,
-        raw_context: list[str] | None = None,
-        clean_tail: list[str] | None = None,
+        committable_raw_context: list[str] | None = None,
+        submitted_clean_tail: list[str] | None = None,
+        committable_raw_tail: list[str] | None = None,
+        read_only_next_raw_head: list[str] | None = None,
         proposed_tree: dict[str, Any] | None = None,
         math_validation: dict[str, Any] | None = None,
+        tree_advisories: list[dict[str, Any]] | None = None,
+        source_heading_advisories: list[dict[str, Any]] | None = None,
         cutoff_kind: str | None = None,
         continuation_node_id: str | None = None,
         next_raw_context_violation: bool = False,
@@ -431,14 +492,19 @@ class BatchToolsService:
         )
         result = SubmitCleanResult(
             valid=len(errors) == 0,
+            commit_ready=len(errors) == 0 and not tree_advisories,
             errors=errors,
             warnings=warnings,
             inferred_cutoff_batch_line=cutoff_line,
             match_confidence=confidence,
-            raw_context_around_cutoff=raw_context or [],
-            clean_tail=clean_tail or [],
+            committable_raw_context_around_cutoff=committable_raw_context or [],
+            submitted_clean_tail=submitted_clean_tail or [],
+            committable_raw_tail=committable_raw_tail or [],
+            read_only_next_raw_head=read_only_next_raw_head or [],
             proposed_tree=proposed_tree or {},
             math_validation=math_validation or {},
+            tree_advisories=tree_advisories or [],
+            source_heading_advisories=source_heading_advisories or [],
             batch_line_count=batch_line_count,
             rollback_lines=rollback_lines,
             next_raw_context_violation=next_raw_context_violation,
@@ -455,6 +521,7 @@ class BatchToolsService:
             self._last_submit_valid = False
             return AdjustDepthsResult(
                 valid=False,
+                commit_ready=False,
                 errors=[
                     "No pending valid submission. Call submit_clean until valid=true "
                     "before adjust_depths."
@@ -555,18 +622,24 @@ class BatchToolsService:
             self._last_submit_valid = False
             return AdjustDepthsResult(
                 valid=False,
+                commit_ready=False,
                 errors=result.errors,
                 warnings=result.warnings,
                 proposed_tree=current_proposal,
                 math_validation=self._pending_math_validation,
+                tree_advisories=result.tree_advisories,
+                source_heading_advisories=result.source_heading_advisories,
             )
 
         return AdjustDepthsResult(
             valid=True,
+            commit_ready=result.commit_ready,
             warnings=result.warnings,
             applied_edits=normalized_edits,
             proposed_tree=result.proposed_tree,
             math_validation=result.math_validation,
+            tree_advisories=result.tree_advisories,
+            source_heading_advisories=result.source_heading_advisories,
         )
 
     def _failed_adjust(
@@ -575,6 +648,7 @@ class BatchToolsService:
         self._last_submit_valid = False
         return AdjustDepthsResult(
             valid=False,
+            commit_ready=False,
             errors=errors,
             proposed_tree=current_proposal,
             math_validation=self._pending_math_validation,
@@ -591,6 +665,20 @@ class BatchToolsService:
                 success=False,
                 error=(
                     "No valid submit_clean available. Call submit_clean until valid=true before commit_batch."
+                ),
+            )
+
+        assert self._pending_tree is not None
+        unresolved_tree_advisories = self._proof_placement_advisories(
+            self._pending_tree, self._pending_events
+        )
+        if unresolved_tree_advisories:
+            return CommitResult(
+                success=False,
+                error=(
+                    "Tree review is unresolved: proof nodes must be siblings of "
+                    "the statements they prove. Apply the suggested tree_advisories "
+                    "with adjust_depths before commit_batch."
                 ),
             )
 
@@ -619,6 +707,44 @@ class BatchToolsService:
             "warnings": [asdict(item) for item in result.warnings],
             "errors": [asdict(item) for item in result.errors],
         }
+
+    @staticmethod
+    def _proof_placement_advisories(
+        proposed_tree_dict: TreeDict,
+        events: list[AnnotationEvent],
+    ) -> list[dict[str, Any]]:
+        advisories: list[dict[str, Any]] = []
+        for event in events:
+            if event.event_type != "header" or event.node_type != "proof":
+                continue
+            if not event.proves:
+                continue
+            try:
+                proof = proposed_tree_dict[event.id]
+                target = proposed_tree_dict[event.proves]
+            except KeyError:
+                continue
+            proof_parent_id = proof.parent.id if proof.parent is not None else None
+            target_parent_id = target.parent.id if target.parent is not None else None
+            if proof_parent_id == target_parent_id:
+                continue
+
+            target_depth = 0
+            cursor = target
+            while cursor.parent is not None:
+                target_depth += 1
+                cursor = cursor.parent
+            advisories.append(
+                {
+                    "code": "proof_should_be_statement_sibling",
+                    "node_id": event.id,
+                    "target_id": event.proves,
+                    "current_parent_id": proof_parent_id,
+                    "expected_parent_id": target_parent_id,
+                    "suggested_depth": target_depth,
+                }
+            )
+        return advisories
 
     def _require_context(self) -> BatchContext:
         if self._context is None:
@@ -693,7 +819,10 @@ class BatchToolsService:
         if has_substantive_prefix:
             return [
                 "Continuation is allowed only for a prior continuation or a unit "
-                "introduced in the opening annotation block. Roll back before this unit."
+                "introduced in the opening annotation block. If this candidate ends "
+                "after a complete statement or proof, keep the candidate and retry "
+                "with cutoff_kind='clean_boundary' and no continuation_node_id. "
+                "Otherwise roll back before the later-starting unit."
             ]
         return []
 
@@ -719,8 +848,8 @@ _TOOL_SPECS: list[dict[str, Any]] = [
     {
         "name": "read_batch",
         "description": (
-            "Read the committable raw batch plus read-only context before and after it. "
-            "Only raw_content may appear in cleaned_text."
+            "Call exactly once. Returns a separately nested COMMITTABLE SOURCE and "
+            "READ-ONLY CONTEXT. Only committable_raw.content may appear in cleaned_text."
         ),
         "input_schema": {"type": "object", "properties": {}},
         "meta": {"anthropic/maxResultSizeChars": 500000},
@@ -748,8 +877,8 @@ _TOOL_SPECS: list[dict[str, Any]] = [
     {
         "name": "submit_clean",
         "description": (
-            "Submit cleaned markdown with annotations. Returns validation info, inferred cutoff, "
-            "raw context, clean tail, and proposed_tree."
+            "Submit cleaned markdown with annotations. Returns validation info, "
+            "cutoff diagnostics, proposed_tree, advisories, and commit_ready."
         ),
         "input_schema": {
             "type": "object",
@@ -757,8 +886,8 @@ _TOOL_SPECS: list[dict[str, Any]] = [
                 "cleaned_text": {
                     "type": "string",
                     "description": (
-                        "Cleaned markdown from raw_content up to the cutoff. Never include "
-                        "prior_clean_context or next_raw_context."
+                        "Cleaned markdown from committable_raw.content up to the "
+                        "cutoff. Never include any read_only_context content."
                     ),
                 },
                 "cutoff_kind": {
@@ -784,7 +913,8 @@ _TOOL_SPECS: list[dict[str, Any]] = [
         "name": "adjust_depths",
         "description": (
             "Transactionally edit only the annotation depths of nodes created by "
-            "the pending valid submission. Returns the complete updated batch tree."
+            "the pending valid submission. Returns the complete updated batch tree "
+            "and commit_ready status."
         ),
         "input_schema": {
             "type": "object",
