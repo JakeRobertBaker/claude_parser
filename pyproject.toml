@@ -20,8 +20,6 @@ packages = ["src/claude_parser"]
 dev = [
     "pytest>=8.0",
     "ruff>=0.15.8",
-    "ruff-lsp>=0.0.62",
-    "lsprotocol>=2023.0.0,<2024.0.0",
     "ty>=0.0.26",
 ]
 
