@@ -2,7 +2,7 @@
 
 ## What changed
 
-- Removed the `RunEngine` class from `src/claude_parser/application/run_engine.py`.
+- Removed the `RunEngine` class from `src/math_parser/application/run_engine.py`.
 - Kept `RunSnapshot` and `BatchPlan` dataclasses.
 - Added module-level pure functions:
   - `complete(...)`

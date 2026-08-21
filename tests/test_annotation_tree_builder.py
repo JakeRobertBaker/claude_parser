@@ -1,12 +1,12 @@
-from claude_parser.domain.annotation_parser import parse_annotations
-from claude_parser.domain.annotation_tree_builder import (
+from math_parser.domain.annotation_parser import parse_annotations
+from math_parser.domain.annotation_tree_builder import (
     INTERNAL_ROOT_ID,
     active_trace_ids,
     process_batch_annotations,
     visible_roots,
 )
-from claude_parser.domain.content import Content
-from claude_parser.domain.node import NodeType, TreeDict
+from math_parser.domain.content import Content
+from math_parser.domain.node import NodeType, TreeDict
 
 
 class TestSingleBatch:

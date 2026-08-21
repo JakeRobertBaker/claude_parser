@@ -1,5 +1,5 @@
-from claude_parser.domain.annotation_parser import AnnotationEvent, parse_annotations
-from claude_parser.domain.validator import validate_annotations
+from math_parser.domain.annotation_parser import AnnotationEvent, parse_annotations
+from math_parser.domain.validator import validate_annotations
 
 
 def _header(line: int, id: str, depth: int = 1, **kwargs) -> AnnotationEvent:

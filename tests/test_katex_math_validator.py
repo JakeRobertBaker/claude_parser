@@ -1,4 +1,4 @@
-from claude_parser.adapters.math import KaTeXMathValidator
+from math_parser.adapters.math import KaTeXMathValidator
 
 
 def test_repairs_doubled_alphabetic_commands_inside_math() -> None:

@@ -12,16 +12,16 @@ Application  — orchestrates use cases, holds shared policies
 Adapters     — concrete implementations of ports (CLI, files, MCP transport, etc.)
 ```
 
-- **Domain** (`src/claude_parser/domain/`): annotation parsing, tree building, node rules.
-- **Ports** (`src/claude_parser/ports/`): `LLMPort`, `StatePort`, `BatchToolsPort`, `MathValidationPort`.
-- **Application** (`src/claude_parser/application/`):
+- **Domain** (`src/math_parser/domain/`): annotation parsing, tree building, node rules.
+- **Ports** (`src/math_parser/ports/`): `LLMPort`, `StatePort`, `BatchToolsPort`, `MathValidationPort`.
+- **Application** (`src/math_parser/application/`):
   - `run_engine.py` contains pure run-flow functions (`plan_next`, `clamp_cutoff`, `advance`) and run dataclasses.
   - `parsing/service.py` owns the full run loop orchestration.
   - `batch_tools/` hosts `BatchToolsService` plus alignment and structured tree-view helpers.
   - `serialization.py`, `prompt_builder.py`, and prompt templates are shared policies.
-- **Adapters** (`src/claude_parser/adapters/`): concrete infrastructure, including
+- **Adapters** (`src/math_parser/adapters/`): concrete infrastructure, including
   interchangeable Claude CLI and Pi SDK agent adapters.
-- **CLI** (`src/claude_parser/cli.py`): composition root.
+- **CLI** (`src/math_parser/cli.py`): composition root.
 
 Dependency arrows point inward:
 

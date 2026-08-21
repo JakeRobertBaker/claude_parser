@@ -1,4 +1,4 @@
-from claude_parser.application.batch_tools.semantic_boundary import (
+from math_parser.application.batch_tools.semantic_boundary import (
     incomplete_trailing_semantic_unit_start,
 )
 

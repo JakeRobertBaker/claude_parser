@@ -1,4 +1,4 @@
-from claude_parser.application.tokens import tail_within_token_budget
+from math_parser.application.tokens import tail_within_token_budget
 
 
 def test_tail_within_token_budget_keeps_largest_whole_line_suffix() -> None:

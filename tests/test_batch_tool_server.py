@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from claude_parser.adapters.mcp.server import BatchMCPServer
-from claude_parser.adapters.state.filesystem import FilesystemStateStore
-from claude_parser.application.tokens import approximate_claude_tokens
-from claude_parser.ports.math_validation import MathValidationResult
-from claude_parser.ports.state import BatchContext
+from math_parser.adapters.mcp.server import BatchMCPServer
+from math_parser.adapters.state.filesystem import FilesystemStateStore
+from math_parser.application.tokens import approximate_claude_tokens
+from math_parser.ports.math_validation import MathValidationResult
+from math_parser.ports.state import BatchContext
 
 
 class _PassthroughMathValidator:

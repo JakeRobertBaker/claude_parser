@@ -7,7 +7,7 @@
 │                  ▘▘ ▝▝                  │                                    │
 │                                         │                                    │
 │         Sonnet 4.6 · Claude Pro         │                                    │
-│   ~/…/knowledge_prasing/claude_parser   │                                    │
+│   ~/…/knowledge_prasing/math_parser   │                                    │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 ❯ I am trying to remember my app structure. I aim to have hexagonal             
@@ -15,7 +15,7 @@ archiitecture with ports and adapters and domain etc. I have a another dir
 called application with ParsingService and can see that this file imports ports 
  and adapters. I thought this was not usually the case? Is the service part of  
 the domain? Can you give me an overview of the app structure and th end to end  
-flow when commands like `uv run python -m claude_parser.cli   --raw             
+flow when commands like `uv run python -m math_parser.cli   --raw
 raw/companion_to_analysis_mini.md   --state                                     
 ~/ai_tool_development/knowledge_prasing/attempt_states/new_attempt_8            
 --max-sections 3` are run.                                                      
@@ -34,7 +34,7 @@ raw/companion_to_analysis_mini.md   --state
 
   Architecture Overview
 
-  claude_parser/
+  math_parser/
   ├── cli.py                    # Entry point, wiring
   ├── config.py                 # ParserConfig dataclass
   ├── ports/                    # Protocols (interfaces)
@@ -130,7 +130,7 @@ ideas?
 
   Proposed Structure
 
-  claude_parser/
+  math_parser/
   ├── cli.py                          # Wiring (creates adapters, injects into
   service)
   ├── config.py
@@ -364,8 +364,8 @@ you give an example of that with this codebase (assuming your proposal.)
   Searched for 1 pattern (ctrl+o to expand)
 
 ● I have a complete picture now. Let me plan and implement.
-● Write(src/claude_parser/domain/content.py)
-  ⎿  Wrote 15 lines to src/claude_parser/domain/content.py
+● Write(src/math_parser/domain/content.py)
+  ⎿  Wrote 15 lines to src/math_parser/domain/content.py
        1 from dataclasses import dataclass, field
        2 
        3 
@@ -378,11 +378,11 @@ you give an example of that with this codebase (assuming your proposal.)
       10     @property
      … +5 lines (ctrl+o to expand)
 
-● Write(src/claude_parser/domain/partition.py)
-  ⎿  Wrote 37 lines to src/claude_parser/domain/partition.py
+● Write(src/math_parser/domain/partition.py)
+  ⎿  Wrote 37 lines to src/math_parser/domain/partition.py
       1 import bisect
       2 from collections import defaultdict
-      3 from claude_parser.domain.content import Content
+      3 from math_parser.domain.content import Content
       4 
       5 LineRange = tuple[int, int]
       6 
@@ -392,8 +392,8 @@ you give an example of that with this codebase (assuming your proposal.)
         a partition of chunks."""
      … +27 lines (ctrl+o to expand)
 
-● Write(src/claude_parser/domain/protocols.py)
-  ⎿  Wrote 11 lines to src/claude_parser/domain/protocols.py
+● Write(src/math_parser/domain/protocols.py)
+  ⎿  Wrote 11 lines to src/math_parser/domain/protocols.py
        1 from typing import Protocol, runtime_checkable
        2 
        3 
@@ -406,8 +406,8 @@ you give an example of that with this codebase (assuming your proposal.)
       10     def __eq__(self, other, /) -> bool: ...
      … +1 line (ctrl+o to expand)
 
-● Write(src/claude_parser/application/llm_response_parser.py)
-  ⎿  Wrote 63 lines to src/claude_parser/application/llm_response_parser.py
+● Write(src/math_parser/application/llm_response_parser.py)
+  ⎿  Wrote 63 lines to src/math_parser/application/llm_response_parser.py
        1 import json
        2 import logging
        3 
@@ -420,14 +420,14 @@ you give an example of that with this codebase (assuming your proposal.)
        9 
       10     Looks for the last assistant result message in the stream,
      … +53 lines (ctrl+o to expand)
-● Write(src/claude_parser/application/serialization.py)
-  ⎿  Wrote 96 lines to src/claude_parser/application/serialization.py
+● Write(src/math_parser/application/serialization.py)
+  ⎿  Wrote 96 lines to src/math_parser/application/serialization.py
        1 from __future__ import annotations
        2 from collections.abc import Callable
        3 from typing import Any
-       4 from claude_parser.domain.protocols import ContentBase
-       5 from claude_parser.domain.content import Content
-       6 from claude_parser.domain.node import Node, TreeDict, NodeType
+       4 from math_parser.domain.protocols import ContentBase
+       5 from math_parser.domain.content import Content
+       6 from math_parser.domain.node import Node, TreeDict, NodeType
        7 
        8 
        9 def content_from_dict(content_dict: dict) -> Content:
@@ -437,7 +437,7 @@ you give an example of that with this codebase (assuming your proposal.)
 ● Now refactor ParsingService to depend on ports only, and fix ProgressStorePort
    method names.
 
-● Write(src/claude_parser/ports/progress_store.py)
+● Write(src/math_parser/ports/progress_store.py)
   ⎿  Added 2 lines, removed 2 lines
        6  
        7  
@@ -449,38 +449,38 @@ you give an example of that with this codebase (assuming your proposal.)
 
 ● Now rewrite ParsingService:
 
-● Write(src/claude_parser/application/parsing_service.py)
+● Write(src/math_parser/application/parsing_service.py)
   ⎿  Added 32 lines, removed 27 lines
        2  import logging
        3  import os
        4  
-       5 -from claude_parser.adapters.claude_cli import extract_json_from
+       5 -from math_parser.adapters.claude_cli import extract_json_from
          -_stream                                                        
-       6 -from claude_parser.adapters.chunk_lines.json_adapter import (  
+       6 -from math_parser.adapters.chunk_lines.json_adapter import (
        7 -    tree_from_dict as chunk_lines_tree_from_dict,              
        8 -    tree_to_dict,                                              
        9 -)                                                              
-      10 -from claude_parser.adapters.filesystem_store import FilesystemS
+      10 -from math_parser.adapters.filesystem_store import FilesystemS
          -tore                                                           
-       5 +from claude_parser.application.llm_response_parser import extra
+       5 +from math_parser.application.llm_response_parser import extra
          +ct_json_from_stream                                            
-       6  from claude_parser.application.merge import (
+       6  from math_parser.application.merge import (
        7      build_dependency_report,
        8      check_intra_duplicates,
      ...
       16      build_retry_prompt,
       17      build_section_prompt,
       18  )
-      19 +from claude_parser.application.serialization import tree_from_d
+      19 +from math_parser.application.serialization import tree_from_d
          +ict, tree_to_dict                                              
-      20  from claude_parser.config import ParserConfig
-      21  from claude_parser.domain.node import Node, TreeDict
-      22  from claude_parser.ports.llm import LLMPort
-      23 +from claude_parser.ports.progress_store import ProgressStorePor
+      20  from math_parser.config import ParserConfig
+      21  from math_parser.domain.node import Node, TreeDict
+      22  from math_parser.ports.llm import LLMPort
+      23 +from math_parser.ports.progress_store import ProgressStorePor
          +t                                                              
-      24 +from claude_parser.ports.tree_repository import TreeRepositoryP
+      24 +from math_parser.ports.tree_repository import TreeRepositoryP
          +ort                                                            
-      25  from claude_parser.ports.vcs import VCSPort
+      25  from math_parser.ports.vcs import VCSPort
       26  
       27  logger = logging.getLogger(__name__)
      ...
@@ -672,7 +672,7 @@ you give an example of that with this codebase (assuming your proposal.)
 ● Now update all the remaining files: adapters, CLI, domain internals,
   __init__.py files.
 
-● Write(src/claude_parser/adapters/claude_cli.py)
+● Write(src/math_parser/adapters/claude_cli.py)
   ⎿  Removed 60 lines
       1 -import json                                                     
       1  import logging
@@ -747,19 +747,19 @@ you give an example of that with this codebase (assuming your proposal.)
       119 -    logger.error("Could not parse JSON from response")        
       120 -    return None                                               
 
-● Write(src/claude_parser/adapters/filesystem_store.py)
+● Write(src/math_parser/adapters/filesystem_store.py)
   ⎿  Added 2 lines, removed 18 lines
        2  import logging
        3  import os
        4  
-       5 -from claude_parser.adapters.chunk_lines.json_adapter import (  
+       5 -from math_parser.adapters.chunk_lines.json_adapter import (
        6 -    tree_from_dict,                                            
        7 -    tree_to_dict,                                              
        8 -)                                                              
-       5 +from claude_parser.application.serialization import tree_from_d
+       5 +from math_parser.application.serialization import tree_from_d
          +ict, tree_to_dict                                              
-       6  from claude_parser.application.progress import ProgressState
-       7  from claude_parser.domain.node import Node, TreeDict
+       6  from math_parser.application.progress import ProgressState
+       7  from math_parser.domain.node import Node, TreeDict
        8  
      ...
       23      def progress_path(self) -> str:
@@ -789,58 +789,58 @@ you give an example of that with this codebase (assuming your proposal.)
 
 ● Update domain internals to use protocols instead of ports:
 
-● Update(src/claude_parser/domain/node.py)
+● Update(src/math_parser/domain/node.py)
   ⎿  Added 1 line, removed 1 line
       1  from __future__ import annotations
       2  from collections.abc import Mapping, Sequence
       3  from enum import Enum
-      4 -from claude_parser.domain.ports import ContentBase              
-      4 +from claude_parser.domain.protocols import ContentBase          
-      5  from claude_parser.domain.content_bound import ContentBound
+      4 -from math_parser.domain.ports import ContentBase
+      4 +from math_parser.domain.protocols import ContentBase
+      5  from math_parser.domain.content_bound import ContentBound
       6  
       7  
 
-● Update(src/claude_parser/domain/content_bound.py)
+● Update(src/math_parser/domain/content_bound.py)
   ⎿  Added 1 line, removed 1 line
       1  from dataclasses import dataclass
-      2 -from claude_parser.domain.ports import ContentBase              
-      2 +from claude_parser.domain.protocols import ContentBase          
+      2 -from math_parser.domain.ports import ContentBase
+      2 +from math_parser.domain.protocols import ContentBase
       3  
       4  
       5  @dataclass
 
 ● Update domain/__init__.py:
 
-● Write(src/claude_parser/domain/__init__.py)
+● Write(src/math_parser/domain/__init__.py)
   ⎿  Added 3 lines, removed 1 line
-      1 -from claude_parser.domain.ports import ContentBase as ContentBas
+      1 -from math_parser.domain.ports import ContentBase as ContentBas
         -e                                                               
-      1 +from claude_parser.domain.protocols import ContentBase as Conten
+      1 +from math_parser.domain.protocols import ContentBase as Conten
         +tBase                                                           
-      2  from claude_parser.domain.content_bound import ContentBound as C
+      2  from math_parser.domain.content_bound import ContentBound as C
          ontentBound
-      3 +from claude_parser.domain.content import Content as Content     
-      4 +from claude_parser.domain.partition import ContentPartition as C
+      3 +from math_parser.domain.content import Content as Content
+      4 +from math_parser.domain.partition import ContentPartition as C
         +ontentPartition                                                 
-      5  from claude_parser.domain.node import Node as Node, TreeDict as 
+      5  from math_parser.domain.node import Node as Node, TreeDict as
          TreeDict, NodeType as NodeType
 
 ● Update application/merge.py to import Content from domain:
 
-● Update(src/claude_parser/application/merge.py)
+● Update(src/math_parser/application/merge.py)
   ⎿  Added 1 line, removed 1 line
       1  import logging
       2  from typing import Any, cast
       3  
-      4 -from claude_parser.adapters.chunk_lines.content import Content  
-      4 +from claude_parser.domain.content import Content                
-      5  from claude_parser.domain.node import Node, NodeType, TreeDict
+      4 -from math_parser.adapters.chunk_lines.content import Content
+      4 +from math_parser.domain.content import Content
+      5  from math_parser.domain.node import Node, NodeType, TreeDict
       6  
       7  logger = logging.getLogger(__name__)
 
 ● Update CLI to pass separate ports:
 
-● Write(src/claude_parser/cli.py)
+● Write(src/math_parser/cli.py)
   ⎿  Added 3 lines, removed 1 line
       74  
       75      llm = ClaudeCLIAdapter()
@@ -860,14 +860,14 @@ you give an example of that with this codebase (assuming your proposal.)
 
 ● Now delete old files:
 
-● Bash(rm /home/jake/ai_tool_development/knowledge_prasing/claude_parser/src/cla
+● Bash(rm /home/jake/ai_tool_development/knowledge_prasing/math_parser/src/cla
       ude_parser/domain/ports.py && rm
       /home/jake/ai_tool_development/knowledge_prasing/claud…)
   ⎿  Done
 
 ● Clean up adapters/__init__.py:
 
-● Write(src/claude_parser/adapters/__init__.py)  ⎿  Wrote 1 lines to src/claude_parser/adapters/__init__.py
+● Write(src/math_parser/adapters/__init__.py)  ⎿  Wrote 1 lines to src/math_parser/adapters/__init__.py
       1 
 
 ● Now update all test imports:
@@ -875,11 +875,11 @@ you give an example of that with this codebase (assuming your proposal.)
 ● Update(tests/test_content.py)
   ⎿  Added 2 lines, removed 2 lines
       1  import pytest
-      2 -from claude_parser.adapters.chunk_lines.content import Content  
-      3 -from claude_parser.adapters.chunk_lines.partition import Content
+      2 -from math_parser.adapters.chunk_lines.content import Content
+      3 -from math_parser.adapters.chunk_lines.partition import Content
         -Partition                                                       
-      2 +from claude_parser.domain.content import Content                
-      3 +from claude_parser.domain.partition import ContentPartition     
+      2 +from math_parser.domain.content import Content
+      3 +from math_parser.domain.partition import ContentPartition
       4  
       5  
       6  def make_content(chunk: int, first: int, last: int) -> Content:
@@ -889,12 +889,12 @@ you give an example of that with this codebase (assuming your proposal.)
       1  import json
       2  import pytest
       3  from pathlib import Path
-      4 -from claude_parser.adapters.chunk_lines.content import Content  
-      4 +from claude_parser.domain.content import Content                
-      5  from claude_parser.domain.node import NodeType, TreeDict
-      6 -from claude_parser.adapters.chunk_lines.json_adapter import tree
+      4 -from math_parser.adapters.chunk_lines.content import Content
+      4 +from math_parser.domain.content import Content
+      5  from math_parser.domain.node import NodeType, TreeDict
+      6 -from math_parser.adapters.chunk_lines.json_adapter import tree
         -_from_dict, node_from_dict                                      
-      6 +from claude_parser.application.serialization import tree_from_di
+      6 +from math_parser.application.serialization import tree_from_di
         +ct, node_from_dict                                              
       7  
       8  FIXTURES = Path(__file__).parent / "fixtures"
@@ -903,15 +903,15 @@ you give an example of that with this codebase (assuming your proposal.)
 ● Update(tests/test_serialization_roundtrip.py)
   ⎿  Added 2 lines, removed 2 lines
        1  import json
-       2 -from claude_parser.adapters.chunk_lines.json_adapter import (  
-       2 +from claude_parser.application.serialization import (          
+       2 -from math_parser.adapters.chunk_lines.json_adapter import (
+       2 +from math_parser.application.serialization import (
        3      tree_from_dict,
        4      tree_to_dict,
        5      content_to_dict,
        6      content_from_dict,
        7  )
-       8 -from claude_parser.adapters.chunk_lines.content import Content 
-       8 +from claude_parser.domain.content import Content               
+       8 -from math_parser.adapters.chunk_lines.content import Content
+       8 +from math_parser.domain.content import Content
        9  
       10  
       11  class TestContentSerialization:
@@ -919,18 +919,18 @@ you give an example of that with this codebase (assuming your proposal.)
 ● Update(tests/test_tree.py)
   ⎿  Added 1 line, removed 1 line
       1  import pytest
-      2 -from claude_parser.adapters.chunk_lines.content import Content  
-      2 +from claude_parser.domain.content import Content                
-      3  from claude_parser.domain.node import Node, NodeType, TreeDict
+      2 -from math_parser.adapters.chunk_lines.content import Content
+      2 +from math_parser.domain.content import Content
+      3  from math_parser.domain.node import Node, NodeType, TreeDict
       4  
       5  
 
 ● Update(tests/test_merge.py)
   ⎿  Added 1 line, removed 1 line
       1  import pytest
-      2 -from claude_parser.adapters.chunk_lines.content import Content  
-      2 +from claude_parser.domain.content import Content                
-      3  from claude_parser.application.merge import (
+      2 -from math_parser.adapters.chunk_lines.content import Content
+      2 +from math_parser.domain.content import Content
+      3  from math_parser.application.merge import (
       4      build_dependency_report,
       5      check_intra_duplicates,
 

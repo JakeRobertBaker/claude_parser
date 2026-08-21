@@ -1,6 +1,6 @@
 import pytest
-from claude_parser.domain.content import Content
-from claude_parser.domain.partition import ContentPartition
+from math_parser.domain.content import Content
+from math_parser.domain.partition import ContentPartition
 
 
 def make_content(chunk: int, first: int, last: int) -> Content:

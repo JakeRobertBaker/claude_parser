@@ -6,10 +6,10 @@ import os
 import re
 from pathlib import Path
 
-from claude_parser.application.serialization import tree_from_dict
-from claude_parser.domain.annotation_tree_builder import visible_roots
-from claude_parser.domain.content import Content
-from claude_parser.domain.node import Node
+from math_parser.application.serialization import tree_from_dict
+from math_parser.domain.annotation_tree_builder import visible_roots
+from math_parser.domain.content import Content
+from math_parser.domain.node import Node
 
 _CLEAN_FILE_RE = re.compile(r"^clean_(\d+)\.md$")
 

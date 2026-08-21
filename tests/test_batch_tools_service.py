@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import cast
 
-from claude_parser.application.batch_tools.service import BatchToolsService
-from claude_parser.application.tokens import approximate_claude_tokens
-from claude_parser.domain.annotation_parser import parse_annotations
-from claude_parser.domain.annotation_tree_builder import process_batch_annotations
-from claude_parser.domain.node import TreeDict
-from claude_parser.ports.math_validation import MathValidationResult
-from claude_parser.ports.state import BatchContext, StatePort
+from math_parser.application.batch_tools.service import BatchToolsService
+from math_parser.application.tokens import approximate_claude_tokens
+from math_parser.domain.annotation_parser import parse_annotations
+from math_parser.domain.annotation_tree_builder import process_batch_annotations
+from math_parser.domain.node import TreeDict
+from math_parser.ports.math_validation import MathValidationResult
+from math_parser.ports.state import BatchContext, StatePort
 
 
 class _FakeState:

@@ -1,4 +1,4 @@
-# Claude Parser
+# Math Parser
 
 Turns messy OCR-derived mathematics Markdown into cleaned Markdown plus a validated
 annotation tree. Agents work through a restricted batch-tool protocol; the Claude
@@ -15,7 +15,7 @@ localhost JSON bridge.
 - The authoritative annotation schema is
   [`docs/annotation_schema.txt`](docs/annotation_schema.txt); its condensed runtime
   form is in
-  [`prompt_templates.py`](src/claude_parser/application/prompt_templates.py).
+  [`prompt_templates.py`](src/math_parser/application/prompt_templates.py).
 - See [`docs/architecture.md`](docs/architecture.md) for the detailed architecture
   and end-to-end run flow.
 
@@ -49,7 +49,7 @@ inside that directory. Resume an interrupted run by supplying the same directory
 with `--resume`.
 
 ```bash
-uv run python -m claude_parser.cli \
+uv run python -m math_parser.cli \
   --raw path/to/raw.md \
   --state path/to/new_state_directory
 ```
@@ -61,7 +61,7 @@ agent through your existing Pi/OpenRouter configuration:
 
 ```bash
 npm install
-uv run python -m claude_parser.cli \
+uv run python -m math_parser.cli \
   --raw path/to/raw.md \
   --state path/to/state \
   --llm-adapter pi-sdk \
@@ -85,6 +85,34 @@ state directory's `logs/pi/` tree. `--pi-debug-stream-log` additionally records
 the full sensitive stream when needed. Each batch includes 2,000-token read-only
 contexts on both sides by default; tune them with
 `--prior-clean-context-tokens` and `--next-raw-context-tokens`.
+
+## Moving to another machine
+
+The tracked repository is self-contained, with Python dependencies locked in
+`uv.lock` and JavaScript dependencies locked in `package-lock.json`. After cloning:
+
+```bash
+uv sync
+npm ci
+uv run python -m pytest tests/
+npm run test:pi
+```
+
+Machine-local items are intentionally not stored in Git:
+
+- Pi/OpenRouter credentials. Configure Pi normally or set `OPENROUTER_API_KEY` on
+  the new machine.
+- The Python virtual environment, Node modules, caches, and built distributions;
+  `uv sync` and `npm ci` recreate them.
+- Raw source documents and parser state directories, which are commonly outside
+  this repository. Copy them separately if they are needed. A copied state
+  directory remains resumable, although old manifests and reports can contain
+  absolute paths from the original machine.
+- Claude CLI installation and authentication, if the `claude-cli` adapter will be
+  used.
+
+Use `git status -sb` after cloning to confirm the intended branch. This repository
+has no submodules, Git LFS objects, or checked-in CI workflow to restore.
 
 ## Documentation status
 

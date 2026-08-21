@@ -16,7 +16,7 @@
 
 ## Entrypoints and Runtime Behavior
 
-- Main parser entrypoint: `uv run python -m claude_parser.cli --raw <raw.md> --state <state_dir> [--resume] [--dry-run]`.
+- Main parser entrypoint: `uv run python -m math_parser.cli --raw <raw.md> --state <state_dir> [--resume] [--dry-run]`.
 - `BatchMCPServer` writes `mcp_config.json` inside `--state`, serves MCP/SSE to
   Claude CLI, and exposes the same service through a localhost JSON endpoint for
   Pi custom tools.
@@ -34,7 +34,7 @@
   `submit_clean`, `adjust_depths`, and `commit_batch`;
   `adapters/mcp/server.py` should stay transport-only.
 - [`docs/annotation_schema.txt`](docs/annotation_schema.txt) is authoritative;
-  [`src/claude_parser/application/prompt_templates.py`](src/claude_parser/application/prompt_templates.py)
+  [`src/math_parser/application/prompt_templates.py`](src/math_parser/application/prompt_templates.py)
   contains the condensed runtime schema.
 - `application/` must not import from `adapters/`.
 

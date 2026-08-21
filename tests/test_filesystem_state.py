@@ -1,8 +1,8 @@
 from pathlib import Path
 import json
 
-from claude_parser.adapters.state.filesystem import FilesystemStateStore
-from claude_parser.application.run_engine import RunSnapshot
+from math_parser.adapters.state.filesystem import FilesystemStateStore
+from math_parser.application.run_engine import RunSnapshot
 
 
 def _write_clean(path: Path, text: str) -> None:

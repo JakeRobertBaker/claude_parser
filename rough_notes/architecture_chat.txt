@@ -7,7 +7,7 @@
 │                  ▘▘ ▝▝                  │                                    │
 │                                         │                                    │
 │         Sonnet 4.6 · Claude Pro         │                                    │
-│   ~/…/knowledge_prasing/claude_parser   │                                    │
+│   ~/…/knowledge_prasing/math_parser   │                                    │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 ❯ I am trying to remember my app structure. I aim to have hexagonal             
@@ -15,7 +15,7 @@ archiitecture with ports and adapters and domain etc. I have a another dir
 called application with ParsingService and can see that this file imports ports 
  and adapters. I thought this was not usually the case? Is the service part of  
 the domain? Can you give me an overview of the app structure and th end to end  
-flow when commands like `uv run python -m claude_parser.cli   --raw             
+flow when commands like `uv run python -m math_parser.cli   --raw
 raw/companion_to_analysis_mini.md   --state                                     
 ~/ai_tool_development/knowledge_prasing/attempt_states/new_attempt_8            
 --max-sections 3` are run.                                                      
@@ -34,7 +34,7 @@ raw/companion_to_analysis_mini.md   --state
 
   Architecture Overview
 
-  claude_parser/
+  math_parser/
   ├── cli.py                    # Entry point, wiring
   ├── config.py                 # ParserConfig dataclass
   ├── ports/                    # Protocols (interfaces)
@@ -130,7 +130,7 @@ ideas?
 
   Proposed Structure
 
-  claude_parser/
+  math_parser/
   ├── cli.py                          # Wiring (creates adapters, injects into
   service)
   ├── config.py

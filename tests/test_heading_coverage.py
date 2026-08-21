@@ -1,7 +1,7 @@
-from claude_parser.application.batch_tools.heading_coverage import (
+from math_parser.application.batch_tools.heading_coverage import (
     source_heading_advisories,
 )
-from claude_parser.domain.annotation_parser import parse_annotations
+from math_parser.domain.annotation_parser import parse_annotations
 
 
 def test_reports_missing_generic_headings_without_confusing_later_theorem() -> None:

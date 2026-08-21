@@ -8,7 +8,7 @@ import {
   buildTools,
   createTelemetry,
   thinkingLevelSummary,
-} from "../src/claude_parser/adapters/llm/pi_runner.mjs";
+} from "../src/math_parser/adapters/llm/pi_runner.mjs";
 
 const SPECS = [
   {

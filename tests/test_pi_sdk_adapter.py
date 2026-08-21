@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 from typing import cast
 
-from claude_parser.adapters.llm.pi_sdk import PiSDKAdapter
+from math_parser.adapters.llm.pi_sdk import PiSDKAdapter
 
 
 def test_invoke_passes_structured_config_to_runner(

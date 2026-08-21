@@ -116,7 +116,7 @@ wheels = [
 ]
 
 [[package]]
-name = "claude-parser"
+name = "math-parser"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -2,7 +2,7 @@
 
 ## What changed
 
-- Replaced `StatePort` contract with explicit persistence-oriented API in `src/claude_parser/ports/state.py`.
+- Replaced `StatePort` contract with explicit persistence-oriented API in `src/math_parser/ports/state.py`.
 - Refactored `FilesystemStateStore` to remove hidden current-batch lifecycle fields:
   - removed `_current_plan`, `_current_cutoff`, `_current_id`, `_current_ordinal`, etc.
   - added explicit methods keyed by `ordinal`/`chunk_id` (`write_raw_batch`, `read_clean_batch`, `write_log`, etc.).

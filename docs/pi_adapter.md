@@ -129,7 +129,7 @@ npm install
 Run with an explicit Pi/OpenRouter model:
 
 ```bash
-uv run python -m claude_parser.cli \
+uv run python -m math_parser.cli \
   --raw path/to/raw.md \
   --state path/to/state \
   --llm-adapter pi-sdk \
