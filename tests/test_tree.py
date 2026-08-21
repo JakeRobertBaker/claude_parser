@@ -1,6 +1,6 @@
 import pytest
-from claude_parser.domain.content import Content
-from claude_parser.domain.node import Node, NodeType, TreeDict
+from math_parser.domain.content import Content
+from math_parser.domain.node import Node, NodeType, TreeDict
 
 
 def make_tree_dict() -> TreeDict:

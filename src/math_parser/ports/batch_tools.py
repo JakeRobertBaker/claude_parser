@@ -1,0 +1,38 @@
+"""Protocol for batch-tool session and transport adapters."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol
+
+from math_parser.ports.state import BatchContext
+
+if TYPE_CHECKING:
+    from math_parser.domain.node import TreeDict
+
+
+class BatchToolsPort(Protocol):
+    """Transport lifecycle around BatchToolsService."""
+
+    def begin_batch(
+        self,
+        context: BatchContext,
+        known_ids: list[str],
+        tree_dict: TreeDict,
+        current_ordinal: int,
+    ) -> None: ...
+
+    def succeeded(self) -> bool: ...
+
+    def committed_source_line(self) -> int | None: ...
+
+    def committed_continuation_node_id(self) -> str | None: ...
+
+    @property
+    def mcp_config_path(self) -> str: ...
+
+    @property
+    def tool_endpoint(self) -> str: ...
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...

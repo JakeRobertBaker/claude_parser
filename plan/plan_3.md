@@ -2,7 +2,7 @@
 
 ## What changed
 
-- Slimmed `BatchToolsPort` in `src/claude_parser/ports/batch_tools.py`:
+- Slimmed `BatchToolsPort` in `src/math_parser/ports/batch_tools.py`:
   - replaced `prepare()` with explicit `begin_batch(...)`
   - added `committed_source_line()`
 - Refactored `BatchToolsService` to explicit session data:

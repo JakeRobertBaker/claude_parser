@@ -1,4 +1,4 @@
-from claude_parser.domain.annotation_parser import parse_annotations
+from math_parser.domain.annotation_parser import parse_annotations
 
 
 class TestParseHeaders:

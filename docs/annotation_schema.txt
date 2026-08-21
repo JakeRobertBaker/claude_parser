@@ -1,0 +1,127 @@
+# Annotation Schema
+
+The selected batch agent cleans markdown and annotates it with text that defines a
+tree.
+
+## Basic Form
+```
+@ ---- id="thm_1_23_proof" type="proof" proves="thm_1_23" deps=["lem_1_18"]
+Theorem A Proof
+```
+
+## Attributes
+- id (required, global unique identifier)
+- title (optional)
+- type (optional; only for semantic math units, allowed values below)
+- proves (optional; id of the statement we are proving, only for type="proof")
+- deps (optional; JSON-style list of prerequisite node IDs)
+
+Valid types:
+definition, theorem, lemma, proposition, corollary, proof, remark, example, exercise, axiom
+
+## Rules:
+
+- Nesting is the source of structure.
+- IDs must be globally unique across all batches. Never reuse IDs from `known_ids` in `read_batch` response.
+- Containers such as chapters, sections, and subsections have no `type`.
+- Use `type` only when the node’s text span is itself a semantic object such as a theorem, lemma, remark, or proof. For example, a theorem statement has `type="theorem"`, but a subsection named after the theorem is still a container; related discussion should be represented as separate child nodes.
+- Proofs are separate sibling nodes at the same depth as the statement, with
+  `type="proof"` and `proves="<id>"`. The `proves` relation links them; do not
+  nest a proof beneath its statement.
+- A statement targeted by `proves` must use one of the proveable semantic types:
+  theorem, lemma, proposition, or corollary. It must not remain generic.
+- Use `deps=[...]` only for real prerequisite nodes that the proof cites or that are needed to understand the material.
+- `title` is optional. Include it only when a source-derived title helps rendering
+  or navigation; do not invent source headings.
+
+## Validation and tree review
+
+Annotation validation emits warnings for semantic issues that may have rare
+permissible cases, including:
+
+- a non-proof node with `proves`;
+- a proof node without `proves`;
+- `proves` targeting anything other than theorem, lemma, proposition, or
+  corollary; and
+- `deps` or `proves` referring to an unknown node.
+
+Annotation validation emits blocking errors for duplicate IDs, content before the
+first header of a new tree, and a typed node that accidentally escapes an
+immediately preceding empty generic container.
+
+Proposed-tree review separately detects a proof nested beneath its statement. The
+submission may still have `valid=true`, but it reports `commit_ready=false` until
+the proof is moved to the statement's depth with `adjust_depths`. Likely omitted
+generic source headings are returned as nonblocking advisories for agent review.
+
+## Example:
+raw
+
+```markdown
+# Book Title
+# Chapter X
+## Theorem A
+Preamble
+Theorem 1.23: Theorem A
+Statement of Theorem A
+Remarks
+Theorem A Proof
+More Remarks
+```
+
+Note, this example can have many interpretations. Annotation picks one interpretation.
+
+Interpretation A
+
+ch_x
+├── preamble (content=Preamble)
+├── thm_a (content=Statement of Theorem A, type="theorem")
+├── remarks (content=Remarks, type="remark")
+├── thm_a_proof (content=Theorem A Proof, type="proof", proves="thm_a")
+└── more_remarks (content=More Remarks, type="remark")
+
+Interpretation B
+
+ch_x
+├── preamble (content=Preamble)
+├── thm_a (no content)
+│   ├── thm_1_23 (content=Statement of Theorem A, type="theorem", deps=[lem_1_18])
+│   ├── thm_a_remarks (content=Remarks, type="remark")
+│   ├── thm_1_23_proof (content=Theorem A Proof, type="proof", proves="thm_1_23")
+└── more_remarks (content=More Remarks, type="remark")
+
+Inline version of Interpretation B
+```
+@ - id="book" title="Book Title"
+@ -- id="ch_x" title="Chapter X"
+
+@ --- id="preamble" title="Preamble"
+Preamble
+
+@ --- id="thm_a" title="Theorem A"
+
+@ ---- id="thm_1_23" type="theorem" deps=["lem_1_18"]
+Statement of Theorem A
+
+@ ---- id="thm_a_remarks" type="remark"
+Remarks
+
+@ ---- id="thm_1_23_proof" type="proof" proves="thm_1_23" deps=["lem_1_18"]
+Theorem A Proof
+
+@ --- id="more_remarks" title="Concluding Remarks" type="remark"
+More Remarks
+```
+
+
+The preview would look like
+````
+book
+└── ch_x
+    ├── preamble
+    ├── thm_a
+    │   ├── thm_1_23 [theorem; deps: lem_1_18]
+    │   ├── thm_a_remarks [remark]
+    │   └── thm_1_23_proof [proof -> thm_1_23; deps: lem_1_18]
+    └── more_remarks [remark]
+````

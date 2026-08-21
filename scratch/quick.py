@@ -1,5 +1,5 @@
-from claude_parser.adapters.chunk_lines.content import Content
-from claude_parser.domain.node import Node, NodeType, TreeDict
+from math_parser.adapters.chunk_lines.content import Content
+from math_parser.domain.node import Node, NodeType, TreeDict
 
 td = TreeDict()
 

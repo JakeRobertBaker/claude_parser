@@ -1,5 +1,5 @@
-from claude_parser.domain.annotation_parser import AnnotationEvent, parse_annotations
-from claude_parser.domain.validator import validate_annotations
+from math_parser.domain.annotation_parser import AnnotationEvent, parse_annotations
+from math_parser.domain.validator import validate_annotations
 
 
 def _header(line: int, id: str, depth: int = 1, **kwargs) -> AnnotationEvent:
@@ -46,6 +46,16 @@ class TestProvesWarnings:
         ]
         result = validate_annotations(events)
         assert any("targets type 'remark'" in w for w in result.warnings)
+
+    def test_proves_generic_target_warns(self):
+        events = [
+            _header(1, "generic_result"),
+            _header(2, "proof", node_type="proof", proves="generic_result"),
+        ]
+
+        result = validate_annotations(events)
+
+        assert any("targets type 'generic'" in warning for warning in result.warnings)
 
 
 class TestDepsWarnings:
@@ -105,3 +115,33 @@ Proof text"""
         )
         assert result.valid
         assert result.warnings == []
+
+
+class TestImmediateContainerHierarchy:
+    def test_rejects_typed_sibling_after_empty_container(self):
+        text = (
+            '@ - id="book"\n'
+            '@ -- id="subsection"\n'
+            '@ -- id="def_1" type="definition"\n'
+            "Definition content.\n"
+        )
+
+        result = validate_annotations(parse_annotations(text), cleaned_text=text)
+
+        assert any(
+            "immediately preceding empty container" in error
+            for error in result.errors
+        )
+
+    def test_allows_typed_sibling_when_container_has_content(self):
+        text = (
+            '@ - id="book"\n'
+            '@ -- id="section"\n'
+            "Section introduction.\n"
+            '@ -- id="def_1" type="definition"\n'
+            "Definition content.\n"
+        )
+
+        result = validate_annotations(parse_annotations(text), cleaned_text=text)
+
+        assert result.errors == []

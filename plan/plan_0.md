@@ -19,7 +19,7 @@ Use pure functions for planning/clamping/advancing and remove `RunEngine` as a c
   - It does not need object identity or mutable internals.
   - Pure functions are easiest to test and remove one class.
 - Where:
-  - Keep in `src/claude_parser/application/run_engine.py` (rename internals, keep file path for minimal churn), or move to `application/run_flow.py` if we want a cleaner file name.
+  - Keep in `src/math_parser/application/run_engine.py` (rename internals, keep file path for minimal churn), or move to `application/run_flow.py` if we want a cleaner file name.
 - Keep:
   - `RunSnapshot` and `BatchPlan` as dataclasses for readability and typed boundaries.
 
@@ -202,7 +202,7 @@ Behavior change:
 - `opencode.json`: no change.
 - `pyproject.toml`:
   - keep dependencies;
-  - optional cleanup: fix/remove stale script entrypoint `claude_parser.validator_cli:main` (module does not exist).
+  - optional cleanup: fix/remove stale script entrypoint `math_parser.validator_cli:main` (module does not exist).
 - `uv.lock`: only change if dependency set changes (not expected).
 
 ## Scratch files
@@ -212,77 +212,77 @@ Behavior change:
 
 ## Source package init files
 
-- `src/claude_parser/__init__.py`: no change.
-- `src/claude_parser/adapters/__init__.py`: no change.
-- `src/claude_parser/application/__init__.py`: no change.
-- `src/claude_parser/ports/__init__.py`: no change.
+- `src/math_parser/__init__.py`: no change.
+- `src/math_parser/adapters/__init__.py`: no change.
+- `src/math_parser/application/__init__.py`: no change.
+- `src/math_parser/ports/__init__.py`: no change.
 
 ## CLI and config
 
-- `src/claude_parser/cli.py`:
+- `src/math_parser/cli.py`:
   - wire state + batch service + MCP server explicitly;
   - ensure batch service instance is shared where needed.
-- `src/claude_parser/config.py`: no required change unless we add optional toggles.
+- `src/math_parser/config.py`: no required change unless we add optional toggles.
 
 ## Ports
 
-- `src/claude_parser/ports/state.py`: major redesign to explicit persistence API.
-- `src/claude_parser/ports/batch_tools.py`:
+- `src/math_parser/ports/state.py`: major redesign to explicit persistence API.
+- `src/math_parser/ports/batch_tools.py`:
   - keep with minor adjustments, or remove if transport no longer needs a port.
-- `src/claude_parser/ports/llm.py`: no change.
+- `src/math_parser/ports/llm.py`: no change.
 
 ## Application
 
-- `src/claude_parser/application/run_engine.py`:
+- `src/math_parser/application/run_engine.py`:
   - remove class `RunEngine`;
   - keep or rename dataclasses + expose pure functions.
-- `src/claude_parser/application/parsing/service.py`: major orchestration rewrite.
-- `src/claude_parser/application/tokens.py`: optional micro-opt (cache encoding).
-- `src/claude_parser/application/prompt_builder.py`: no change.
-- `src/claude_parser/application/prompt_templates.py`: no required change.
-- `src/claude_parser/application/serialization.py`: no required change.
+- `src/math_parser/application/parsing/service.py`: major orchestration rewrite.
+- `src/math_parser/application/tokens.py`: optional micro-opt (cache encoding).
+- `src/math_parser/application/prompt_builder.py`: no change.
+- `src/math_parser/application/prompt_templates.py`: no required change.
+- `src/math_parser/application/serialization.py`: no required change.
 
 ### Batch tools package
 
-- `src/claude_parser/application/batch_tools/service.py`: major refactor to explicit `begin_batch` and commit result retrieval.
-- `src/claude_parser/application/batch_tools/cutoff_alignment.py`: no change.
-- `src/claude_parser/application/batch_tools/tree_preview.py`: no change.
-- `src/claude_parser/application/batch_tools/models.py`: likely delete/inline for class reduction.
-- `src/claude_parser/application/batch_tools/__init__.py`: update exports if models are removed.
+- `src/math_parser/application/batch_tools/service.py`: major refactor to explicit `begin_batch` and commit result retrieval.
+- `src/math_parser/application/batch_tools/cutoff_alignment.py`: no change.
+- `src/math_parser/application/batch_tools/tree_preview.py`: no change.
+- `src/math_parser/application/batch_tools/models.py`: likely delete/inline for class reduction.
+- `src/math_parser/application/batch_tools/__init__.py`: update exports if models are removed.
 
 ## Adapters
 
 ### LLM adapter
 
-- `src/claude_parser/adapters/llm/claude_cli.py`: no behavioral change expected.
-- `src/claude_parser/adapters/llm/__init__.py`: no change.
+- `src/math_parser/adapters/llm/claude_cli.py`: no behavioral change expected.
+- `src/math_parser/adapters/llm/__init__.py`: no change.
 
 ### MCP adapter
 
-- `src/claude_parser/adapters/mcp/server.py`:
+- `src/math_parser/adapters/mcp/server.py`:
   - inject pre-built `BatchToolsService`;
   - stay transport-only.
-- `src/claude_parser/adapters/mcp/__init__.py`: no change.
+- `src/math_parser/adapters/mcp/__init__.py`: no change.
 
 ### State adapter
 
-- `src/claude_parser/adapters/state/filesystem.py`: large simplification.
+- `src/math_parser/adapters/state/filesystem.py`: large simplification.
   - remove `RunEngine` dependency;
   - remove `_current_plan`, `_current_cutoff`, `_current_id`, `_current_ordinal`, and hidden batch lifecycle methods;
   - implement explicit persistence methods keyed by `ordinal` / `chunk_id` arguments.
-- `src/claude_parser/adapters/state/__init__.py`: no change.
+- `src/math_parser/adapters/state/__init__.py`: no change.
 
 ## Domain (no behavioral refactor planned)
 
-- `src/claude_parser/domain/annotation_parser.py`: no change.
-- `src/claude_parser/domain/annotation_tree_builder.py`: no change.
-- `src/claude_parser/domain/validator.py`: no change.
-- `src/claude_parser/domain/content.py`: no change.
-- `src/claude_parser/domain/content_bound.py`: no change.
-- `src/claude_parser/domain/partition.py`: no change (optional mutable default cleanup later).
-- `src/claude_parser/domain/protocols.py`: no change.
-- `src/claude_parser/domain/node.py`: no change in this refactor.
-- `src/claude_parser/domain/__init__.py`: no required change.
+- `src/math_parser/domain/annotation_parser.py`: no change.
+- `src/math_parser/domain/annotation_tree_builder.py`: no change.
+- `src/math_parser/domain/validator.py`: no change.
+- `src/math_parser/domain/content.py`: no change.
+- `src/math_parser/domain/content_bound.py`: no change.
+- `src/math_parser/domain/partition.py`: no change (optional mutable default cleanup later).
+- `src/math_parser/domain/protocols.py`: no change.
+- `src/math_parser/domain/node.py`: no change in this refactor.
+- `src/math_parser/domain/__init__.py`: no required change.
 
 ## Tests and fixtures
 
